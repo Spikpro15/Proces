@@ -122,12 +122,13 @@ public sealed class TelemetryServer : IDisposable
                         .ToList();
                     _config.UpdateEnabledMetrics(list);
                 }
-                await WriteJsonAsync(res, "{"ok":true}");
-            }
-            catch
-            {
-                res.StatusCode = 400;
-                await WriteJsonAsync(res, "{"ok":false}");
+                await WriteJsonAsync(res, "{\"ok\":true}");
+         }
+         catch
+         {
+             res.StatusCode = 400;
+             await WriteJsonAsync(res, "{\"ok\":false}");
+         }
             }
             return;
         }
