@@ -62,7 +62,7 @@ public sealed class TelemetryServer : IDisposable
                 _ = Task.Run(() => HandleRequestAsync(ctx, ct), ct);
             }
             catch when (ct.IsCancellationRequested) { break; }
-            catch { /* keep listening */ }
+            catch { }
         }
     }
 
@@ -123,17 +123,15 @@ public sealed class TelemetryServer : IDisposable
                     _config.UpdateEnabledMetrics(list);
                 }
                 await WriteJsonAsync(res, "{\"ok\":true}");
-         }
-         catch
-         {
-             res.StatusCode = 400;
-             await WriteJsonAsync(res, "{\"ok\":false}");
-         }
+            }
+            catch
+            {
+                res.StatusCode = 400;
+                await WriteJsonAsync(res, "{\"ok\":false}");
             }
             return;
         }
 
-        // Built-in PC Configuration UI
         res.ContentType = "text/html; charset=utf-8";
         var html = Encoding.UTF8.GetBytes(ConfigPageHtml);
         await res.OutputStream.WriteAsync(html, ct);
@@ -150,7 +148,6 @@ public sealed class TelemetryServer : IDisposable
             var ws = wsCtx.WebSocket;
             _sockets[id] = ws;
 
-            // Send initial snapshot immediately
             var initBytes = Encoding.UTF8.GetBytes(_latestJson);
             await ws.SendAsync(new ArraySegment<byte>(initBytes), WebSocketMessageType.Text, true, ct);
 
