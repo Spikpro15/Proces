@@ -50,14 +50,13 @@ public sealed class AdbBridge : IDisposable
             }
 
             string? serial = null;
-            foreach (var rawLine in output.Split('
-'))
-            {
-                var line = rawLine.Trim();
-                if (line.EndsWith("	device", StringComparison.OrdinalIgnoreCase) ||
-                    line.Contains(" device", StringComparison.OrdinalIgnoreCase))
-                {
-                    var parts = line.Split(new[] { '	', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+          foreach (var rawLine in output.Split('\n'))
+         {
+             var line = rawLine.Trim();
+             if (line.EndsWith("\tdevice", StringComparison.OrdinalIgnoreCase) ||
+                 line.Contains(" device", StringComparison.OrdinalIgnoreCase))
+             {
+                 var parts = line.Split(new[] { '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2 && parts[1] == "device")
                     {
                         serial = parts[0];
