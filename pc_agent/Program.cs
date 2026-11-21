@@ -13,7 +13,9 @@ static class Program
         var config = new ConfigManager(baseDir);
         var port = config.Current.Port;
 
-        using var hw = new HardwareReader();
+        HardwareReader? hw = null;
+        try { hw = new HardwareReader(); } catch { }
+
         using var fps = new FpsTracker(baseDir);
         using var adb = new AdbBridge(baseDir, port);
         using var server = new TelemetryServer(port, config);
@@ -27,26 +29,26 @@ static class Program
         {
             while (!cts.Token.IsCancellationRequested)
             {
+                var payload = new TelemetryPayload
+                {
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    UsbConnected = adb.IsConnected,
+                    DeviceSerial = adb.DeviceSerial,
+                    PresentMonActive = fps.IsRunning,
+                    EnabledMetrics = config.Current.EnabledMetrics
+                };
+
+                try { hw?.ReadInto(payload); } catch { }
                 try
                 {
-                    var payload = new TelemetryPayload
-                    {
-                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                        UsbConnected = adb.IsConnected,
-                        DeviceSerial = adb.DeviceSerial,
-                        PresentMonActive = fps.IsRunning,
-                        EnabledMetrics = config.Current.EnabledMetrics
-                    };
-
-                    hw.ReadInto(payload);
                     var (curFps, low1, game) = fps.GetCurrentFps();
                     payload.Fps = curFps;
                     payload.Fps1Low = low1;
                     payload.ActiveGame = game;
-
-                    await server.BroadcastAsync(payload);
                 }
-                catch { /* keep telemetry alive */ }
+                catch { }
+
+                try { await server.BroadcastAsync(payload); } catch { }
 
                 try { await Task.Delay(config.Current.RefreshMs, cts.Token); }
                 catch { break; }
@@ -85,5 +87,6 @@ static class Program
 
         Application.Run();
         cts.Cancel();
+        hw?.Dispose();
     }
 }
