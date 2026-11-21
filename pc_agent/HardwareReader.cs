@@ -70,7 +70,6 @@ public sealed class HardwareReader : IDisposable
             }
         }
 
-        // Fallbacks if LibreHardwareMonitor missed any sensor
         if (payload.CpuLoad is null)
             payload.CpuLoad = ReadCpuLoadWin32();
 
@@ -87,7 +86,7 @@ public sealed class HardwareReader : IDisposable
 
         foreach (var s in hw.Sensors)
         {
-            if (s.Value is null) continue;
+            if (s.Value is null || !float.IsFinite(s.Value.Value)) continue;
             var val = (double)s.Value.Value;
 
             if (s.SensorType == SensorType.Load && s.Name.Equals("CPU Total", StringComparison.OrdinalIgnoreCase))
@@ -120,7 +119,7 @@ public sealed class HardwareReader : IDisposable
 
         foreach (var s in hw.Sensors)
         {
-            if (s.Value is null) continue;
+            if (s.Value is null || !float.IsFinite(s.Value.Value)) continue;
             var val = (double)s.Value.Value;
 
             if (s.SensorType == SensorType.Load && s.Name.Equals("GPU Core", StringComparison.OrdinalIgnoreCase))
@@ -148,7 +147,7 @@ public sealed class HardwareReader : IDisposable
 
         foreach (var s in hw.Sensors)
         {
-            if (s.Value is null) continue;
+            if (s.Value is null || !float.IsFinite(s.Value.Value)) continue;
             var val = (double)s.Value.Value;
 
             if (s.SensorType == SensorType.Load && s.Name.Equals("Memory", StringComparison.OrdinalIgnoreCase))
@@ -197,7 +196,7 @@ public sealed class HardwareReader : IDisposable
     }
 
     private static bool TryD(string s, out double v) =>
-        double.TryParse(s.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out v);
+        double.TryParse(s.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out v) && double.IsFinite(v);
 
     private double? ReadCpuLoadWin32()
     {
@@ -212,13 +211,14 @@ public sealed class HardwareReader : IDisposable
         _prevIdle = i; _prevKernel = k; _prevUser = u;
         ulong total = dk + du;
         if (total == 0) return null;
-        return Math.Round((1.0 - (double)di / total) * 100.0, 1);
+        var res = (1.0 - (double)di / total) * 100.0;
+        return double.IsFinite(res) ? Math.Round(Math.Clamp(res, 0.0, 100.0), 1) : null;
     }
 
     private static void ReadRamWin32(TelemetryPayload payload)
     {
         var mem = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
-        if (!GlobalMemoryStatusEx(ref mem)) return;
+        if (!GlobalMemoryStatusEx(ref mem) || mem.ullTotalPhys == 0) return;
         double totalGb = mem.ullTotalPhys / 1073741824.0;
         double usedGb = (mem.ullTotalPhys - mem.ullAvailPhys) / 1073741824.0;
         payload.RamTotalGb = Math.Round(totalGb, 1);
