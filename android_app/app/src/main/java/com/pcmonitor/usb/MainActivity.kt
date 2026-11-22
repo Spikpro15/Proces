@@ -4,17 +4,22 @@ import android.app.AlertDialog
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.TypedValue
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.GridLayout
+import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -40,6 +45,8 @@ class MainActivity : AppCompatActivity() {
     private val wsUrl = "ws://127.0.0.1:8765/ws"
     private val configUrl = "http://127.0.0.1:8765/api/config"
     private val mediaUrl = "http://127.0.0.1:8765/api/media"
+    private val mediaArtUrl = "http://127.0.0.1:8765/api/media/art"
+    private val macroUrl = "http://127.0.0.1:8765/api/macro"
 
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -52,17 +59,34 @@ class MainActivity : AppCompatActivity() {
     private var isDimmed = false
     private var orientationMode = 0
     private var isMediaOpen = false
+    private var isMacroOpen = false
+    private var lastArtVersion = -1
+
+    private var currentTheme = "midnight"
+    private var currentFontScale = 1.0f
+
+    private data class ThemeColors(val bg: Int, val card: Int, val border: Int, val accent: Int)
+    private val themes = mapOf(
+        "midnight" to ThemeColors(Color.parseColor("#090C10"), Color.parseColor("#131922"), Color.parseColor("#243042"), Color.parseColor("#58A6FF")),
+        "amoled" to ThemeColors(Color.parseColor("#000000"), Color.parseColor("#0A0A0A"), Color.parseColor("#1F242C"), Color.parseColor("#00E676")),
+        "spide" to ThemeColors(Color.parseColor("#14100E"), Color.parseColor("#211A16"), Color.parseColor("#3A2D26"), Color.parseColor("#FF8A50")),
+        "cyber" to ThemeColors(Color.parseColor("#0B0814"), Color.parseColor("#161026"), Color.parseColor("#352459"), Color.parseColor("#D946EF"))
+    )
 
     private lateinit var gestureDetector: GestureDetector
+    private lateinit var rootContainer: View
     private lateinit var tvStatus: TextView
     private lateinit var tvGameName: TextView
     private lateinit var metricsGrid: GridLayout
     private lateinit var tvMiniMedia: TextView
     private lateinit var mediaOverlay: View
+    private lateinit var ivMediaArt: ImageView
     private lateinit var tvMediaStatus: TextView
     private lateinit var tvMediaTitle: TextView
     private lateinit var tvMediaArtist: TextView
     private lateinit var btnPlayPause: TextView
+    private lateinit var macroOverlay: View
+    private lateinit var macroGrid: GridLayout
 
     private val allMetricIds = listOf(
         "fps", "cpu_load", "cpu_temp", "gpu_load", "gpu_temp", "ram_load",
@@ -86,11 +110,23 @@ class MainActivity : AppCompatActivity() {
         "fps", "cpu_load", "cpu_temp", "gpu_load", "gpu_temp", "ram_load"
     )
 
+    private data class MacroItem(val label: String, val hotkey: String)
+    private var macros: List<MacroItem> = listOf(
+        MacroItem("🎙 Мут мик.", "Ctrl+Shift+M"),
+        MacroItem("🔴 Запись", "Ctrl+Shift+R"),
+        MacroItem("🎬 Сцена 1", "Ctrl+Shift+1"),
+        MacroItem("🎬 Сцена 2", "Ctrl+Shift+2"),
+        MacroItem("📸 Скриншот", "Win+PrintScreen"),
+        MacroItem("🔇 Звук ПК", "vol_mute")
+    )
+
     private data class CardHolder(
+        val cardRoot: View,
         val tvLabel: TextView,
         val tvValue: TextView,
         val tvUnit: TextView,
         val tvSub: TextView,
+        val sparkline: SparklineView,
         val progress: ProgressBar
     )
 
@@ -102,47 +138,46 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
 
+        rootContainer = findViewById(R.id.rootContainer)
         tvStatus = findViewById(R.id.tvStatus)
         tvGameName = findViewById(R.id.tvGameName)
         metricsGrid = findViewById(R.id.metricsGrid)
         tvMiniMedia = findViewById(R.id.tvMiniMedia)
         mediaOverlay = findViewById(R.id.mediaOverlay)
+        ivMediaArt = findViewById(R.id.ivMediaArt)
         tvMediaStatus = findViewById(R.id.tvMediaStatus)
         tvMediaTitle = findViewById(R.id.tvMediaTitle)
         tvMediaArtist = findViewById(R.id.tvMediaArtist)
         btnPlayPause = findViewById(R.id.btnPlayPause)
+        macroOverlay = findViewById(R.id.macroOverlay)
+        macroGrid = findViewById(R.id.macroGrid)
 
         findViewById<View>(R.id.btnSettings).setOnClickListener { openSettingsDialog() }
         findViewById<View>(R.id.btnRotate).setOnClickListener { cycleOrientation() }
         findViewById<View>(R.id.btnDim).setOnClickListener { toggleDim() }
+        findViewById<View>(R.id.btnMacros).setOnClickListener { showMacroOverlay(true) }
+        findViewById<View>(R.id.btnCloseMacros).setOnClickListener { showMacroOverlay(false) }
         tvMiniMedia.setOnClickListener { showMediaOverlay(true) }
         findViewById<View>(R.id.btnCloseMedia).setOnClickListener { showMediaOverlay(false) }
 
-        findViewById<View>(R.id.btnPrev).setOnClickListener { sendMediaCommand("prev") }
-        btnPlayPause.setOnClickListener { sendMediaCommand("play_pause") }
-        findViewById<View>(R.id.btnNext).setOnClickListener { sendMediaCommand("next") }
-        findViewById<View>(R.id.btnVolDown).setOnClickListener { sendMediaCommand("vol_down") }
-        findViewById<View>(R.id.btnVolMute).setOnClickListener { sendMediaCommand("vol_mute") }
-        findViewById<View>(R.id.btnVolUp).setOnClickListener { sendMediaCommand("vol_up") }
+        findViewById<View>(R.id.btnPrev).setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "prev")) }
+        btnPlayPause.setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "play_pause")) }
+        findViewById<View>(R.id.btnNext).setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "next")) }
+        findViewById<View>(R.id.btnVolDown).setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "vol_down")) }
+        findViewById<View>(R.id.btnVolMute).setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "vol_mute")) }
+        findViewById<View>(R.id.btnVolUp).setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "vol_up")) }
 
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onFling(
-                e1: MotionEvent?,
-                e2: MotionEvent,
-                velocityX: Float,
-                velocityY: Float
-            ): Boolean {
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
                 if (e1 == null) return false
-                val diffY = e2.y - e1.y
-                val diffX = e2.x - e1.x
-                if (abs(diffY) > abs(diffX) && abs(diffY) > 90 && abs(velocityY) > 120) {
-                    if (diffY < 0 && !isMediaOpen) {
-                        showMediaOverlay(true)
-                        return true
-                    } else if (diffY > 0 && isMediaOpen) {
-                        showMediaOverlay(false)
-                        return true
-                    }
+                val dx = e2.x - e1.x
+                val dy = e2.y - e1.y
+                if (abs(dy) > abs(dx) && abs(dy) > 90 && abs(velocityY) > 120) {
+                    if (dy < 0 && !isMediaOpen && !isMacroOpen) { showMediaOverlay(true); return true }
+                    if (dy > 0 && isMediaOpen) { showMediaOverlay(false); return true }
+                } else if (abs(dx) > abs(dy) && abs(dx) > 90 && abs(velocityX) > 120) {
+                    if (dx < 0 && !isMacroOpen && !isMediaOpen) { showMacroOverlay(true); return true }
+                    if (dx > 0 && isMacroOpen) { showMacroOverlay(false); return true }
                 }
                 return false
             }
@@ -150,6 +185,8 @@ class MainActivity : AppCompatActivity() {
 
         loadSavedMetrics()
         rebuildGrid()
+        rebuildMacroGrid()
+        applyTheme()
         applyImmersiveMode()
         connectWebSocket()
     }
@@ -162,28 +199,126 @@ class MainActivity : AppCompatActivity() {
     private fun showMediaOverlay(show: Boolean) {
         if (show == isMediaOpen) return
         isMediaOpen = show
-        val height = window.decorView.height.toFloat().coerceAtLeast(800f)
+        val h = window.decorView.height.toFloat().coerceAtLeast(800f)
         if (show) {
             mediaOverlay.visibility = View.VISIBLE
-            mediaOverlay.translationY = height
+            mediaOverlay.translationY = h
             mediaOverlay.animate().translationY(0f).setDuration(220).start()
         } else {
-            mediaOverlay.animate().translationY(height).setDuration(200).withEndAction {
+            mediaOverlay.animate().translationY(h).setDuration(200).withEndAction {
                 mediaOverlay.visibility = View.GONE
             }.start()
         }
     }
 
-    private fun sendMediaCommand(action: String) {
-        val bodyJson = JSONObject().put("action", action).toString()
+    private fun showMacroOverlay(show: Boolean) {
+        if (show == isMacroOpen) return
+        isMacroOpen = show
+        val w = window.decorView.width.toFloat().coerceAtLeast(800f)
+        if (show) {
+            macroOverlay.visibility = View.VISIBLE
+            macroOverlay.translationX = w
+            macroOverlay.animate().translationX(0f).setDuration(220).start()
+        } else {
+            macroOverlay.animate().translationX(w).setDuration(200).withEndAction {
+                macroOverlay.visibility = View.GONE
+            }.start()
+        }
+    }
+
+    private fun sendPost(url: String, json: JSONObject) {
         val req = Request.Builder()
-            .url(mediaUrl)
-            .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .url(url)
+            .post(json.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
         client.newCall(req).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {}
             override fun onResponse(call: okhttp3.Call, response: Response) { response.close() }
         })
+    }
+
+    private fun fetchAlbumArt() {
+        val req = Request.Builder().url(mediaArtUrl).build()
+        client.newCall(req).enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                mainHandler.post { ivMediaArt.visibility = View.GONE }
+            }
+            override fun onResponse(call: okhttp3.Call, response: Response) {
+                response.use { res ->
+                    if (res.code == 200) {
+                        val bytes = res.body?.bytes()
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            if (bmp != null) {
+                                mainHandler.post {
+                                    ivMediaArt.setImageBitmap(bmp)
+                                    ivMediaArt.visibility = View.VISIBLE
+                                }
+                                return
+                            }
+                        }
+                    }
+                    mainHandler.post { ivMediaArt.visibility = View.GONE }
+                }
+            }
+        })
+    }
+
+    private fun applyTheme() {
+        val th = themes[currentTheme] ?: themes["midnight"]!!
+        rootContainer.setBackgroundColor(th.bg)
+        macroOverlay.setBackgroundColor(Color.argb(245, Color.red(th.bg), Color.green(th.bg), Color.blue(th.bg)))
+        cards.values.forEach { holder ->
+            holder.cardRoot.background = makeCardDrawable(th.card, th.border)
+            holder.tvValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34f * currentFontScale)
+        }
+        rebuildMacroGrid()
+    }
+
+    private fun makeCardDrawable(fill: Int, stroke: Int): GradientDrawable =
+        GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(fill)
+            setStroke(2, stroke)
+            cornerRadius = 28f
+        }
+
+    private fun rebuildMacroGrid() {
+        macroGrid.removeAllViews()
+        val th = themes[currentTheme] ?: themes["midnight"]!!
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val count = macros.size.coerceAtLeast(1)
+        val cols = if (isLandscape) 3 else 2
+        val rows = ceil(count.toDouble() / cols).toInt().coerceAtLeast(1)
+        macroGrid.columnCount = cols
+        macroGrid.rowCount = rows
+
+        macros.forEachIndexed { idx, m ->
+            val btn = TextView(this).apply {
+                text = "${m.label}\n${m.hotkey}"
+                setTextColor(Color.parseColor("#E6EDF3"))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                gravity = Gravity.CENTER
+                background = makeCardDrawable(th.card, th.border)
+                setPadding(16, 16, 16, 16)
+                setOnClickListener { v ->
+                    v.animate().scaleX(0.94f).scaleY(0.94f).setDuration(80).withEndAction {
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(90).start()
+                    }.start()
+                    sendPost(macroUrl, JSONObject().put("hotkey", m.hotkey))
+                }
+            }
+            val params = GridLayout.LayoutParams(
+                GridLayout.spec(idx / cols, 1f),
+                GridLayout.spec(idx % cols, 1f)
+            ).apply {
+                width = 0
+                height = 0
+                setMargins(10, 10, 10, 10)
+            }
+            btn.layoutParams = params
+            macroGrid.addView(btn)
+        }
     }
 
     override fun onResume() {
@@ -194,6 +329,7 @@ class MainActivity : AppCompatActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         rebuildGrid()
+        rebuildMacroGrid()
         lastPayload?.let { updateUi(it) }
     }
 
@@ -210,8 +346,7 @@ class MainActivity : AppCompatActivity() {
             WindowCompat.setDecorFitsSystemWindows(window, false)
             WindowInsetsControllerCompat(window, window.decorView).let { ctrl ->
                 ctrl.hide(WindowInsetsCompat.Type.systemBars())
-                ctrl.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                ctrl.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             }
         } else {
             window.decorView.systemUiVisibility = (
@@ -245,9 +380,7 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("pc_monitor_prefs", MODE_PRIVATE)
         val saved = prefs.getString("enabled_metrics", null) ?: return
         val list = saved.split(",").filter { it in allMetricIds }
-        if (list.isNotEmpty()) {
-            enabledMetrics = list.toMutableList()
-        }
+        if (list.isNotEmpty()) enabledMetrics = list.toMutableList()
     }
 
     private fun saveMetricsLocally() {
@@ -261,6 +394,7 @@ class MainActivity : AppCompatActivity() {
         metricsGrid.removeAllViews()
         cards.clear()
 
+        val th = themes[currentTheme] ?: themes["midnight"]!!
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val count = enabledMetrics.size.coerceAtLeast(1)
         val cols = when {
@@ -287,12 +421,16 @@ class MainActivity : AppCompatActivity() {
             card.layoutParams = params
 
             val holder = CardHolder(
+                cardRoot = card.findViewById(R.id.cardRoot),
                 tvLabel = card.findViewById(R.id.tvLabel),
                 tvValue = card.findViewById(R.id.tvValue),
                 tvUnit = card.findViewById(R.id.tvUnit),
                 tvSub = card.findViewById(R.id.tvSub),
+                sparkline = card.findViewById(R.id.sparkline),
                 progress = card.findViewById(R.id.progressBar)
             )
+            holder.cardRoot.background = makeCardDrawable(th.card, th.border)
+            holder.tvValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34f * currentFontScale)
             holder.tvLabel.text = metricLabels[id] ?: id
             cards[id] = holder
             metricsGrid.addView(card)
@@ -318,13 +456,8 @@ class MainActivity : AppCompatActivity() {
                 } catch (_: Exception) { }
             }
 
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                scheduleReconnect()
-            }
-
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                scheduleReconnect()
-            }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = scheduleReconnect()
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = scheduleReconnect()
         })
     }
 
@@ -352,13 +485,40 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        val remoteTheme = d.optString("theme", currentTheme)
+        val remoteScale = d.optDouble("fontScale", currentFontScale.toDouble()).toFloat().coerceIn(0.75f, 1.45f)
+        if (remoteTheme != currentTheme || abs(remoteScale - currentFontScale) > 0.01f) {
+            currentTheme = if (remoteTheme in themes) remoteTheme else "midnight"
+            currentFontScale = remoteScale
+            applyTheme()
+        }
+
+        val remoteMacros = d.optJSONArray("macros")
+        if (remoteMacros != null && remoteMacros.length() > 0) {
+            val parsed = mutableListOf<MacroItem>()
+            for (i in 0 until remoteMacros.length()) {
+                val obj = remoteMacros.optJSONObject(i) ?: continue
+                parsed.add(MacroItem(obj.optString("label", "Кнопка"), obj.optString("hotkey", "")))
+            }
+            if (parsed.isNotEmpty() && parsed != macros) {
+                macros = parsed
+                rebuildMacroGrid()
+            }
+        }
+
         val game = d.optString("activeGame", "")
         tvGameName.text = if (game.isNotEmpty() && game != "null") "Игра: $game" else ""
 
-        // Update Media Player Overlay + bottom hint
+        // Media + album art
         val mTitle = if (d.isNull("mediaTitle")) "" else d.optString("mediaTitle", "")
         val mArtist = if (d.isNull("mediaArtist")) "" else d.optString("mediaArtist", "")
         val mPlaying = d.optBoolean("mediaPlaying", false)
+        val artVer = d.optInt("mediaArtVersion", 0)
+        if (artVer != lastArtVersion) {
+            lastArtVersion = artVer
+            if (mTitle.isNotEmpty()) fetchAlbumArt() else ivMediaArt.visibility = View.GONE
+        }
+
         if (mTitle.isNotEmpty()) {
             val icon = if (mPlaying) "▶" else "⏸"
             tvMiniMedia.text = "⌃ $icon $mTitle" + if (mArtist.isNotEmpty()) " — $mArtist" else ""
@@ -367,12 +527,15 @@ class MainActivity : AppCompatActivity() {
             tvMediaArtist.text = mArtist
             btnPlayPause.text = if (mPlaying) "⏸" else "▶"
         } else {
-            tvMiniMedia.text = "⌃ Свайп вверх — плеер Windows"
+            tvMiniMedia.text = "⌃ Свайп вверх — плеер · ⇠ Свайп влево — кнопки"
             tvMediaStatus.text = "Плеер Windows"
             tvMediaTitle.text = "Ничего не играет"
             tvMediaArtist.text = ""
             btnPlayPause.text = "⏯"
+            ivMediaArt.visibility = View.GONE
         }
+
+        val accentColor = (themes[currentTheme] ?: themes["midnight"]!!).accent
 
         cards["fps"]?.let { c ->
             val fps = if (d.isNull("fps")) null else d.optInt("fps")
@@ -381,23 +544,22 @@ class MainActivity : AppCompatActivity() {
                 c.tvValue.text = fps.toString()
                 c.tvUnit.text = "FPS"
                 c.tvSub.text = if (low1 != null) "1% low: $low1 FPS" else ""
-                val color = when {
-                    fps >= 60 -> "#3FB950"
-                    fps >= 30 -> "#D29922"
-                    else -> "#F85149"
+                val col = when {
+                    fps >= 60 -> Color.parseColor("#3FB950")
+                    fps >= 30 -> Color.parseColor("#D29922")
+                    else -> Color.parseColor("#F85149")
                 }
-                setCardAccent(c, color, (fps * 100 / 165).coerceIn(0, 100))
+                setCardData(c, col, (fps * 100 / 165).coerceIn(0, 100), fps / 165f)
             } else {
-                c.tvValue.text = "--"
-                c.tvUnit.text = "FPS"
+                c.tvValue.text = "--"; c.tvUnit.text = "FPS"
                 c.tvSub.text = if (d.optBoolean("presentMonActive", false)) "Нет активной игры" else "PresentMon не запущен"
-                setCardAccent(c, "#8B949E", 0)
+                setCardData(c, Color.parseColor("#8B949E"), 0, null)
             }
         }
 
-        updatePercentCard("cpu_load", d, "cpuLoad", d.optString("cpuName", ""))
+        updatePercentCard("cpu_load", d, "cpuLoad", d.optString("cpuName", ""), accentColor)
         updateTempCard("cpu_temp", d, "cpuTemp", "Tctl / Package")
-        updatePercentCard("gpu_load", d, "gpuLoad", d.optString("gpuName", ""))
+        updatePercentCard("gpu_load", d, "gpuLoad", d.optString("gpuName", ""), accentColor)
         updateTempCard("gpu_temp", d, "gpuTemp", "GPU Core")
 
         cards["ram_load"]?.let { c ->
@@ -408,9 +570,10 @@ class MainActivity : AppCompatActivity() {
                 c.tvValue.text = pct.roundToInt().toString()
                 c.tvUnit.text = "%"
                 c.tvSub.text = if (used != null && total != null) "$used / $total ГБ" else ""
-                setCardAccent(c, loadColor(pct), pct.roundToInt().coerceIn(0, 100))
+                setCardData(c, loadColor(pct, accentColor), pct.roundToInt().coerceIn(0, 100), (pct / 100.0).toFloat())
             } else {
-                c.tvValue.text = "--"; c.tvUnit.text = "%"; c.tvSub.text = ""; setCardAccent(c, "#8B949E", 0)
+                c.tvValue.text = "--"; c.tvUnit.text = "%"; c.tvSub.text = ""
+                setCardData(c, Color.parseColor("#8B949E"), 0, null)
             }
         }
 
@@ -422,28 +585,28 @@ class MainActivity : AppCompatActivity() {
                 c.tvUnit.text = "ГБ"
                 val pct = if (total != null && total > 0) ((used / total) * 100).roundToInt() else 0
                 c.tvSub.text = if (total != null) "из ${String.format("%.1f", total)} ГБ ($pct%)" else ""
-                setCardAccent(c, loadColor(pct.toDouble()), pct.coerceIn(0, 100))
+                setCardData(c, loadColor(pct.toDouble(), accentColor), pct.coerceIn(0, 100), pct / 100f)
             } else {
-                c.tvValue.text = "--"; c.tvUnit.text = "ГБ"; c.tvSub.text = ""; setCardAccent(c, "#8B949E", 0)
+                c.tvValue.text = "--"; c.tvUnit.text = "ГБ"; c.tvSub.text = ""
+                setCardData(c, Color.parseColor("#8B949E"), 0, null)
             }
         }
 
-        updateSimpleCard("cpu_power", d, "cpuPower", "Вт", 120.0, "#58A6FF")
-        updateSimpleCard("gpu_power", d, "gpuPower", "Вт", 200.0, "#A371F7")
-        updateSimpleCard("cpu_clock", d, "cpuClock", "МГц", 5000.0, "#58A6FF")
-        updateSimpleCard("gpu_clock", d, "gpuClock", "МГц", 3000.0, "#A371F7")
+        updateSimpleCard("cpu_power", d, "cpuPower", "Вт", 120.0, accentColor)
+        updateSimpleCard("gpu_power", d, "gpuPower", "Вт", 200.0, accentColor)
+        updateSimpleCard("cpu_clock", d, "cpuClock", "МГц", 5000.0, accentColor)
+        updateSimpleCard("gpu_clock", d, "gpuClock", "МГц", 3000.0, accentColor)
     }
 
-    private fun updatePercentCard(id: String, d: JSONObject, key: String, sub: String) {
+    private fun updatePercentCard(id: String, d: JSONObject, key: String, sub: String, accent: Int) {
         val c = cards[id] ?: return
         val v = optNullableDouble(d, key)
         if (v != null) {
-            c.tvValue.text = v.roundToInt().toString()
-            c.tvUnit.text = "%"
-            c.tvSub.text = sub
-            setCardAccent(c, loadColor(v), v.roundToInt().coerceIn(0, 100))
+            c.tvValue.text = v.roundToInt().toString(); c.tvUnit.text = "%"; c.tvSub.text = sub
+            setCardData(c, loadColor(v, accent), v.roundToInt().coerceIn(0, 100), (v / 100.0).toFloat())
         } else {
-            c.tvValue.text = "--"; c.tvUnit.text = "%"; c.tvSub.text = ""; setCardAccent(c, "#8B949E", 0)
+            c.tvValue.text = "--"; c.tvUnit.text = "%"; c.tvSub.text = ""
+            setCardData(c, Color.parseColor("#8B949E"), 0, null)
         }
     }
 
@@ -451,44 +614,43 @@ class MainActivity : AppCompatActivity() {
         val c = cards[id] ?: return
         val v = optNullableDouble(d, key)
         if (v != null) {
-            c.tvValue.text = v.roundToInt().toString()
-            c.tvUnit.text = "°C"
-            c.tvSub.text = sub
-            val color = when {
-                v >= 85.0 -> "#F85149"
-                v >= 72.0 -> "#D29922"
-                else -> "#3FB950"
+            c.tvValue.text = v.roundToInt().toString(); c.tvUnit.text = "°C"; c.tvSub.text = sub
+            val col = when {
+                v >= 85.0 -> Color.parseColor("#F85149")
+                v >= 72.0 -> Color.parseColor("#D29922")
+                else -> Color.parseColor("#3FB950")
             }
-            setCardAccent(c, color, v.roundToInt().coerceIn(0, 100))
+            setCardData(c, col, v.roundToInt().coerceIn(0, 100), (v / 100.0).toFloat())
         } else {
-            c.tvValue.text = "--"; c.tvUnit.text = "°C"; c.tvSub.text = ""; setCardAccent(c, "#8B949E", 0)
+            c.tvValue.text = "--"; c.tvUnit.text = "°C"; c.tvSub.text = ""
+            setCardData(c, Color.parseColor("#8B949E"), 0, null)
         }
     }
 
-    private fun updateSimpleCard(id: String, d: JSONObject, key: String, unit: String, maxVal: Double, hex: String) {
+    private fun updateSimpleCard(id: String, d: JSONObject, key: String, unit: String, maxVal: Double, color: Int) {
         val c = cards[id] ?: return
         val v = optNullableDouble(d, key)
         if (v != null) {
-            c.tvValue.text = v.roundToInt().toString()
-            c.tvUnit.text = unit
-            c.tvSub.text = ""
-            setCardAccent(c, hex, ((v / maxVal) * 100).roundToInt().coerceIn(0, 100))
+            c.tvValue.text = v.roundToInt().toString(); c.tvUnit.text = unit; c.tvSub.text = ""
+            val norm = (v / maxVal).toFloat()
+            setCardData(c, color, (norm * 100).roundToInt().coerceIn(0, 100), norm)
         } else {
-            c.tvValue.text = "--"; c.tvUnit.text = unit; c.tvSub.text = ""; setCardAccent(c, "#8B949E", 0)
+            c.tvValue.text = "--"; c.tvUnit.text = unit; c.tvSub.text = ""
+            setCardData(c, Color.parseColor("#8B949E"), 0, null)
         }
     }
 
-    private fun loadColor(pct: Double): String = when {
-        pct >= 90.0 -> "#F85149"
-        pct >= 75.0 -> "#D29922"
-        else -> "#58A6FF"
+    private fun loadColor(pct: Double, accent: Int): Int = when {
+        pct >= 90.0 -> Color.parseColor("#F85149")
+        pct >= 75.0 -> Color.parseColor("#D29922")
+        else -> accent
     }
 
-    private fun setCardAccent(c: CardHolder, hex: String, progress: Int) {
-        val color = Color.parseColor(hex)
+    private fun setCardData(c: CardHolder, color: Int, progress: Int, sparkNorm: Float?) {
         c.tvValue.setTextColor(color)
         c.progress.progress = progress
         c.progress.progressTintList = ColorStateList.valueOf(color)
+        if (sparkNorm != null) c.sparkline.addPoint(sparkNorm, color)
     }
 
     private fun optNullableDouble(d: JSONObject, key: String): Double? {
@@ -503,9 +665,7 @@ class MainActivity : AppCompatActivity() {
 
         AlertDialog.Builder(this)
             .setTitle("Какие показатели выводить")
-            .setMultiChoiceItems(labels, checked) { _, which, isChecked ->
-                checked[which] = isChecked
-            }
+            .setMultiChoiceItems(labels, checked) { _, which, isChecked -> checked[which] = isChecked }
             .setPositiveButton("Сохранить") { _, _ ->
                 val selected = allMetricIds.filterIndexed { idx, _ -> checked[idx] }
                 if (selected.isNotEmpty()) {
@@ -513,22 +673,10 @@ class MainActivity : AppCompatActivity() {
                     saveMetricsLocally()
                     rebuildGrid()
                     lastPayload?.let { updateUi(it) }
-                    pushConfigToPc(selected)
+                    sendPost(configUrl, JSONObject().put("enabledMetrics", JSONArray(selected)))
                 }
             }
             .setNegativeButton("Отмена", null)
             .show()
-    }
-
-    private fun pushConfigToPc(selected: List<String>) {
-        val bodyJson = JSONObject().put("enabledMetrics", JSONArray(selected)).toString()
-        val req = Request.Builder()
-            .url(configUrl)
-            .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
-            .build()
-        client.newCall(req).enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {}
-            override fun onResponse(call: okhttp3.Call, response: Response) { response.close() }
-        })
     }
 }

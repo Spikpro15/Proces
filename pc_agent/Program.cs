@@ -31,13 +31,17 @@ static class Program
         {
             while (!cts.Token.IsCancellationRequested)
             {
+                var cfg = config.Current;
                 var payload = new TelemetryPayload
                 {
                     Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     UsbConnected = adb.IsConnected,
                     DeviceSerial = adb.DeviceSerial,
                     PresentMonActive = fps.IsRunning,
-                    EnabledMetrics = config.Current.EnabledMetrics
+                    Theme = cfg.Theme,
+                    FontScale = cfg.FontScale,
+                    EnabledMetrics = cfg.EnabledMetrics,
+                    Macros = cfg.Macros
                 };
 
                 try { hw?.ReadInto(payload); } catch { }
@@ -55,17 +59,18 @@ static class Program
 
                 try
                 {
-                    var (mTitle, mArtist, mPlaying) = await media.GetMediaInfoAsync();
+                    var (mTitle, mArtist, mPlaying, artVer) = await media.GetMediaInfoAsync();
                     payload.MediaTitle = mTitle;
                     payload.MediaArtist = mArtist;
                     payload.MediaPlaying = mPlaying;
+                    payload.MediaArtVersion = artVer;
                 }
                 catch { }
 
                 try { sessions.OnTick(payload, activePid); } catch { }
                 try { await server.BroadcastAsync(payload); } catch { }
 
-                try { await Task.Delay(config.Current.RefreshMs, cts.Token); }
+                try { await Task.Delay(cfg.RefreshMs, cts.Token); }
                 catch { break; }
             }
         });
@@ -78,7 +83,7 @@ static class Program
         };
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Редактор экрана и отчёты", null, (_, _) =>
+        menu.Items.Add("Студия экрана и отчёты", null, (_, _) =>
         {
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
         });
@@ -86,6 +91,19 @@ static class Program
         {
             Process.Start(new ProcessStartInfo(sessions.ReportsDir) { UseShellExecute = true });
         });
+
+        var autoItem = new ToolStripMenuItem("Автозапуск с Windows")
+        {
+            CheckOnClick = true,
+            Checked = AutoStartManager.IsEnabled()
+        };
+        autoItem.Click += (_, _) =>
+        {
+            AutoStartManager.SetEnabled(autoItem.Checked);
+            autoItem.Checked = AutoStartManager.IsEnabled();
+        };
+        menu.Items.Add(autoItem);
+
         menu.Items.Add("Переподключить USB (ADB)", null, (_, _) => adb.ForceReconnect());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Выход", null, (_, _) =>
@@ -102,8 +120,8 @@ static class Program
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
         };
 
-        tray.ShowBalloonTip(2500, "PC Monitor USB запущен",
-            "Открой редактор в трее или свайпни вверх на телефоне для плеера.", ToolTipIcon.Info);
+        tray.ShowBalloonTip(2500, "PC Monitor USB v4 запущен",
+            "Свайп вверх — плеер с обложкой, свайп влево — кнопки Stream Deck.", ToolTipIcon.Info);
 
         Application.Run();
         cts.Cancel();

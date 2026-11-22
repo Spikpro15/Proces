@@ -1,11 +1,13 @@
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using Windows.Media.Control;
 
 namespace PCMonitorAgent;
 
 /// <summary>
-/// Reads currently playing Windows media (SMTC: Spide, Spotify, Yandex Music, Edge/YouTube, etc.)
-/// and sends playback / volume commands.
+/// Reads currently playing Windows media (title, artist, playback status, and resized JPEG album art)
+/// and executes playback / volume commands.
 /// </summary>
 public sealed class MediaController
 {
@@ -14,6 +16,9 @@ public sealed class MediaController
     private string? _cachedTitle;
     private string? _cachedArtist;
     private bool _cachedPlaying;
+    private string _lastTrackKey = "";
+    private byte[]? _cachedArtJpeg;
+    private int _artVersion;
 
     private const byte VK_VOLUME_MUTE = 0xAD;
     private const byte VK_VOLUME_DOWN = 0xAE;
@@ -23,11 +28,13 @@ public sealed class MediaController
     private const byte VK_MEDIA_PLAY_PAUSE = 0xB3;
     private const uint KEYEVENTF_KEYUP = 0x0002;
 
-    public async Task<(string? Title, string? Artist, bool Playing)> GetMediaInfoAsync()
+    public byte[]? CurrentArtJpeg => _cachedArtJpeg;
+
+    public async Task<(string? Title, string? Artist, bool Playing, int ArtVersion)> GetMediaInfoAsync()
     {
         var now = Environment.TickCount64;
         if (now - _lastPollTick < 900)
-            return (_cachedTitle, _cachedArtist, _cachedPlaying);
+            return (_cachedTitle, _cachedArtist, _cachedPlaying, _artVersion);
         _lastPollTick = now;
 
         try
@@ -39,7 +46,13 @@ public sealed class MediaController
                 _cachedTitle = null;
                 _cachedArtist = null;
                 _cachedPlaying = false;
-                return (null, null, false);
+                if (_cachedArtJpeg is not null)
+                {
+                    _cachedArtJpeg = null;
+                    _lastTrackKey = "";
+                    _artVersion++;
+                }
+                return (null, null, false, _artVersion);
             }
 
             var props = await session.TryGetMediaPropertiesAsync();
@@ -48,6 +61,14 @@ public sealed class MediaController
             _cachedTitle = string.IsNullOrWhiteSpace(props?.Title) ? null : props.Title.Trim();
             _cachedArtist = string.IsNullOrWhiteSpace(props?.Artist) ? null : props.Artist.Trim();
             _cachedPlaying = playback?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+
+            var trackKey = $"{_cachedTitle}|{_cachedArtist}";
+            if (trackKey != _lastTrackKey)
+            {
+                _lastTrackKey = trackKey;
+                _cachedArtJpeg = await ExtractThumbnailJpegAsync(props?.Thumbnail);
+                _artVersion++;
+            }
         }
         catch
         {
@@ -56,7 +77,31 @@ public sealed class MediaController
             _cachedPlaying = false;
         }
 
-        return (_cachedTitle, _cachedArtist, _cachedPlaying);
+        return (_cachedTitle, _cachedArtist, _cachedPlaying, _artVersion);
+    }
+
+    private static async Task<byte[]?> ExtractThumbnailJpegAsync(Windows.Storage.Streams.IRandomAccessStreamReference? thumbRef)
+    {
+        if (thumbRef is null) return null;
+        try
+        {
+            using var winrtStream = await thumbRef.OpenReadAsync();
+            using var netStream = winrtStream.AsStreamForRead();
+            using var orig = new Bitmap(netStream);
+
+            const int size = 240;
+            using var resized = new Bitmap(size, size);
+            using (var g = Graphics.FromImage(resized))
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.DrawImage(orig, 0, 0, size, size);
+            }
+
+            using var ms = new MemoryStream();
+            resized.Save(ms, ImageFormat.Jpeg);
+            return ms.ToArray();
+        }
+        catch { return null; }
     }
 
     public async Task<bool> ExecuteCommandAsync(string action)
@@ -65,15 +110,9 @@ public sealed class MediaController
         {
             switch (action)
             {
-                case "vol_up":
-                    SendKey(VK_VOLUME_UP);
-                    return true;
-                case "vol_down":
-                    SendKey(VK_VOLUME_DOWN);
-                    return true;
-                case "vol_mute":
-                    SendKey(VK_VOLUME_MUTE);
-                    return true;
+                case "vol_up": SendKey(VK_VOLUME_UP); return true;
+                case "vol_down": SendKey(VK_VOLUME_DOWN); return true;
+                case "vol_mute": SendKey(VK_VOLUME_MUTE); return true;
             }
 
             _manager ??= await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
@@ -101,13 +140,10 @@ public sealed class MediaController
                 }
             }
 
-            _lastPollTick = 0; // force immediate refresh on next tick
+            _lastPollTick = 0;
             return handled;
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
     }
 
     private static void SendKey(byte vk)

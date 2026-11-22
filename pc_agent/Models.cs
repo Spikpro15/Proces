@@ -2,6 +2,18 @@ using System.Text.Json.Serialization;
 
 namespace PCMonitorAgent;
 
+public class MacroButton
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = "";
+
+    [JsonPropertyName("label")]
+    public string Label { get; set; } = "";
+
+    [JsonPropertyName("hotkey")]
+    public string Hotkey { get; set; } = "";
+}
+
 public class AppConfig
 {
     [JsonPropertyName("port")]
@@ -9,6 +21,12 @@ public class AppConfig
 
     [JsonPropertyName("refreshMs")]
     public int RefreshMs { get; set; } = 500;
+
+    [JsonPropertyName("theme")]
+    public string Theme { get; set; } = "midnight";
+
+    [JsonPropertyName("fontScale")]
+    public double FontScale { get; set; } = 1.0;
 
     [JsonPropertyName("enabledMetrics")]
     public List<string> EnabledMetrics { get; set; } = new()
@@ -19,6 +37,17 @@ public class AppConfig
         "gpu_load",
         "gpu_temp",
         "ram_load"
+    };
+
+    [JsonPropertyName("macros")]
+    public List<MacroButton> Macros { get; set; } = new()
+    {
+        new() { Id = "m1", Label = "🎙 Мут мик.", Hotkey = "Ctrl+Shift+M" },
+        new() { Id = "m2", Label = "🔴 Запись", Hotkey = "Ctrl+Shift+R" },
+        new() { Id = "m3", Label = "🎬 Сцена 1", Hotkey = "Ctrl+Shift+1" },
+        new() { Id = "m4", Label = "🎬 Сцена 2", Hotkey = "Ctrl+Shift+2" },
+        new() { Id = "m5", Label = "📸 Скриншот", Hotkey = "Win+PrintScreen" },
+        new() { Id = "m6", Label = "🔇 Звук ПК", Hotkey = "vol_mute" }
     };
 
     public static readonly List<MetricDefinition> AllMetrics = new()
@@ -121,6 +150,18 @@ public class TelemetryPayload
     [JsonPropertyName("mediaPlaying")]
     public bool MediaPlaying { get; set; }
 
+    [JsonPropertyName("mediaArtVersion")]
+    public int MediaArtVersion { get; set; }
+
+    [JsonPropertyName("theme")]
+    public string Theme { get; set; } = "midnight";
+
+    [JsonPropertyName("fontScale")]
+    public double FontScale { get; set; } = 1.0;
+
     [JsonPropertyName("enabledMetrics")]
     public List<string> EnabledMetrics { get; set; } = new();
+
+    [JsonPropertyName("macros")]
+    public List<MacroButton> Macros { get; set; } = new();
 }
