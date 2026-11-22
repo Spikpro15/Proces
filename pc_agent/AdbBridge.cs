@@ -32,6 +32,13 @@ public sealed class AdbBridge : IDisposable
         var serial = DeviceSerial;
         var prefix = string.IsNullOrEmpty(serial) ? "" : $"-s {serial} ";
         var output = await RunAdbAsync($"{prefix}install -r \"{apkPath}\"");
+
+        if (output is not null && output.Contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE", StringComparison.OrdinalIgnoreCase))
+        {
+            await RunAdbAsync($"{prefix}uninstall com.pcmonitor.usb");
+            output = await RunAdbAsync($"{prefix}install \"{apkPath}\"");
+        }
+
         if (output is not null && output.Contains("Success", StringComparison.OrdinalIgnoreCase))
         {
             await Task.Delay(500);
