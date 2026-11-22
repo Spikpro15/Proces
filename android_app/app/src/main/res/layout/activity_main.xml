@@ -24,13 +24,13 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:background="@drawable/status_pill_bg"
-                android:paddingLeft="12dp"
+                android:paddingLeft="11dp"
                 android:paddingTop="5dp"
-                android:paddingRight="12dp"
+                android:paddingRight="11dp"
                 android:paddingBottom="5dp"
-                android:text="○ Ожидание ПК по USB..."
+                android:text="○ Ожидание ПК..."
                 android:textColor="#D29922"
-                android:textSize="13sp"
+                android:textSize="12sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -40,14 +40,14 @@
                 android:layout_weight="1"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:paddingLeft="10dp"
+                android:paddingLeft="8dp"
                 android:paddingRight="6dp"
                 android:text=""
                 android:textColor="#8B949E"
-                android:textSize="13sp" />
+                android:textSize="12sp" />
 
             <TextView
-                android:id="@+id/btnMacros"
+                android:id="@+id/btnUpdateApp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginEnd="6dp"
@@ -56,9 +56,25 @@
                 android:paddingTop="5dp"
                 android:paddingRight="10dp"
                 android:paddingBottom="5dp"
-                android:text="⚡ Кнопки"
+                android:text="⬇ Обновить"
+                android:textColor="#3FB950"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnMacros"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/status_pill_bg"
+                android:paddingLeft="9dp"
+                android:paddingTop="5dp"
+                android:paddingRight="9dp"
+                android:paddingBottom="5dp"
+                android:text="⚡"
                 android:textColor="#E6EDF3"
-                android:textSize="12sp" />
+                android:textSize="13sp" />
 
             <TextView
                 android:id="@+id/btnDim"
@@ -93,13 +109,13 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:background="@drawable/status_pill_bg"
-                android:paddingLeft="10dp"
+                android:paddingLeft="9dp"
                 android:paddingTop="5dp"
-                android:paddingRight="10dp"
+                android:paddingRight="9dp"
                 android:paddingBottom="5dp"
                 android:text="⚙"
                 android:textColor="#E6EDF3"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
         </LinearLayout>
 
         <GridLayout
@@ -123,7 +139,7 @@
             android:textSize="11sp" />
     </LinearLayout>
 
-    <!-- NEXT-GEN SWIPE-UP WINDOWS MEDIA PLAYER -->
+    <!-- CLEAN RESPONSIVE NEXT-GEN MEDIA PLAYER -->
     <FrameLayout
         android:id="@+id/mediaOverlay"
         android:layout_width="match_parent"
@@ -135,7 +151,7 @@
             android:id="@+id/ivMediaBackdrop"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:alpha="0.82"
+            android:alpha="0.88"
             android:scaleType="centerCrop" />
 
         <View
@@ -149,19 +165,21 @@
             android:layout_height="match_parent"
             android:gravity="center_horizontal"
             android:orientation="vertical"
-            android:paddingLeft="24dp"
-            android:paddingTop="14dp"
-            android:paddingRight="24dp"
-            android:paddingBottom="16dp">
+            android:paddingLeft="20dp"
+            android:paddingTop="12dp"
+            android:paddingRight="20dp"
+            android:paddingBottom="14dp">
 
             <View
                 android:id="@+id/btnCloseMedia"
                 android:layout_width="48dp"
                 android:layout_height="5dp"
-                android:layout_marginBottom="14dp"
+                android:layout_marginBottom="10dp"
                 android:background="@drawable/glass_pill" />
 
+            <!-- Adaptive content container: horizontal in landscape, vertical in portrait (toggled in Kotlin) -->
             <LinearLayout
+                android:id="@+id/mediaBody"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
@@ -170,23 +188,26 @@
 
                 <ImageView
                     android:id="@+id/ivMediaArt"
-                    android:layout_width="172dp"
-                    android:layout_height="172dp"
-                    android:layout_marginEnd="26dp"
+                    android:layout_width="148dp"
+                    android:layout_height="148dp"
+                    android:layout_margin="12dp"
                     android:background="@drawable/card_bg"
-                    android:elevation="14dp"
+                    android:elevation="16dp"
                     android:scaleType="centerCrop"
                     android:visibility="gone" />
 
                 <LinearLayout
+                    android:id="@+id/mediaRightCol"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:gravity="center_vertical"
-                    android:orientation="vertical">
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical"
+                    android:paddingLeft="8dp"
+                    android:paddingRight="8dp">
 
                     <LinearLayout
-                        android:layout_width="match_parent"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
@@ -204,9 +225,9 @@
 
                         <com.pcmonitor.usb.AudioVisualizerView
                             android:id="@+id/audioVisualizer"
-                            android:layout_width="110dp"
-                            android:layout_height="20dp"
-                            android:layout_marginStart="12dp" />
+                            android:layout_width="96dp"
+                            android:layout_height="18dp"
+                            android:layout_marginStart="10dp" />
                     </LinearLayout>
 
                     <TextView
@@ -215,10 +236,11 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
                         android:ellipsize="end"
+                        android:gravity="center"
                         android:maxLines="2"
                         android:text="Ничего не играет"
                         android:textColor="#FFFFFF"
-                        android:textSize="26sp"
+                        android:textSize="22sp"
                         android:textStyle="bold" />
 
                     <TextView
@@ -227,24 +249,25 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:ellipsize="end"
+                        android:gravity="center"
                         android:maxLines="1"
                         android:text=""
-                        android:textColor="#B8C2CC"
-                        android:textSize="15sp" />
+                        android:textColor="#C2CCD6"
+                        android:textSize="14sp" />
 
                     <ProgressBar
                         android:id="@+id/mediaProgress"
                         style="?android:attr/progressBarStyleHorizontal"
                         android:layout_width="match_parent"
-                        android:layout_height="5dp"
-                        android:layout_marginTop="14dp"
+                        android:layout_height="4dp"
+                        android:layout_marginTop="12dp"
                         android:max="1000"
                         android:progress="0" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
+                        android:layout_marginTop="3dp"
                         android:orientation="horizontal">
 
                         <TextView
@@ -267,71 +290,75 @@
                             android:textSize="11sp" />
                     </LinearLayout>
 
+                    <!-- Playback buttons centered cleanly -->
                     <LinearLayout
-                        android:layout_width="match_parent"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
-                        android:gravity="center_vertical"
+                        android:layout_marginTop="12dp"
+                        android:gravity="center"
                         android:orientation="horizontal">
 
                         <ImageView
                             android:id="@+id/btnPrev"
-                            android:layout_width="52dp"
-                            android:layout_height="52dp"
-                            android:layout_marginEnd="14dp"
+                            android:layout_width="48dp"
+                            android:layout_height="48dp"
+                            android:layout_marginEnd="18dp"
                             android:background="@drawable/glass_circle_btn"
-                            android:padding="12dp"
+                            android:padding="11dp"
                             android:src="@drawable/ic_prev" />
 
                         <ImageView
                             android:id="@+id/btnPlayPause"
-                            android:layout_width="66dp"
-                            android:layout_height="66dp"
-                            android:layout_marginEnd="14dp"
+                            android:layout_width="62dp"
+                            android:layout_height="62dp"
+                            android:layout_marginEnd="18dp"
                             android:background="@drawable/glass_circle_btn"
                             android:elevation="8dp"
-                            android:padding="16dp"
+                            android:padding="15dp"
                             android:src="@drawable/ic_play" />
 
                         <ImageView
                             android:id="@+id/btnNext"
-                            android:layout_width="52dp"
-                            android:layout_height="52dp"
-                            android:layout_marginEnd="20dp"
+                            android:layout_width="48dp"
+                            android:layout_height="48dp"
                             android:background="@drawable/glass_circle_btn"
-                            android:padding="12dp"
+                            android:padding="11dp"
                             android:src="@drawable/ic_next" />
+                    </LinearLayout>
 
-                        <LinearLayout
-                            android:layout_width="wrap_content"
-                            android:layout_height="44dp"
-                            android:background="@drawable/glass_pill"
-                            android:gravity="center"
-                            android:orientation="horizontal"
-                            android:paddingLeft="6dp"
-                            android:paddingRight="6dp">
+                    <!-- Volume pill cleanly on its own row so nothing ever overflows -->
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="38dp"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/glass_pill"
+                        android:gravity="center"
+                        android:orientation="horizontal"
+                        android:paddingLeft="10dp"
+                        android:paddingRight="10dp">
 
-                            <ImageView
-                                android:id="@+id/btnVolDown"
-                                android:layout_width="38dp"
-                                android:layout_height="38dp"
-                                android:padding="9dp"
-                                android:src="@drawable/ic_vol_down" />
+                        <ImageView
+                            android:id="@+id/btnVolDown"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:padding="8dp"
+                            android:src="@drawable/ic_vol_down" />
 
-                            <ImageView
-                                android:id="@+id/btnVolMute"
-                                android:layout_width="38dp"
-                                android:layout_height="38dp"
-                                android:padding="9dp"
-                                android:src="@drawable/ic_vol_mute" />
+                        <ImageView
+                            android:id="@+id/btnVolMute"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:layout_marginStart="6dp"
+                            android:layout_marginEnd="6dp"
+                            android:padding="8dp"
+                            android:src="@drawable/ic_vol_mute" />
 
-                            <ImageView
-                                android:id="@+id/btnVolUp"
-                                android:layout_width="38dp"
-                                android:layout_height="38dp"
-                                android:padding="9dp"
-                                android:src="@drawable/ic_vol_up" />
-                        </LinearLayout>
+                        <ImageView
+                            android:id="@+id/btnVolUp"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:padding="8dp"
+                            android:src="@drawable/ic_vol_up" />
                     </LinearLayout>
                 </LinearLayout>
             </LinearLayout>

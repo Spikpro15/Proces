@@ -1,10 +1,12 @@
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using Windows.Media.Control;
 
 namespace PCMonitorAgent;
 
+/// <summary>
+/// Reads Windows SMTC media info + raw album art bytes (JPEG/PNG/WebP — no GDI+ crash on WebP)
+/// with automatic retry when a player loads thumbnail slightly after track change.
+/// </summary>
 public sealed class MediaController
 {
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
@@ -15,8 +17,10 @@ public sealed class MediaController
     private double? _cachedPosSec;
     private double? _cachedDurSec;
     private string _lastTrackKey = "";
-    private byte[]? _cachedArtJpeg;
+    private byte[]? _cachedArtBytes;
+    private string _cachedArtContentType = "image/jpeg";
     private int _artVersion;
+    private int _artRetriesLeft;
 
     private const byte VK_VOLUME_MUTE = 0xAD;
     private const byte VK_VOLUME_DOWN = 0xAE;
@@ -26,7 +30,8 @@ public sealed class MediaController
     private const byte VK_MEDIA_PLAY_PAUSE = 0xB3;
     private const uint KEYEVENTF_KEYUP = 0x0002;
 
-    public byte[]? CurrentArtJpeg => _cachedArtJpeg;
+    public byte[]? CurrentArtBytes => _cachedArtBytes;
+    public string CurrentArtContentType => _cachedArtContentType;
 
     public async Task<(string? Title, string? Artist, bool Playing, int ArtVersion, double? PosSec, double? DurSec)> GetMediaInfoAsync()
     {
@@ -46,9 +51,9 @@ public sealed class MediaController
                 _cachedPlaying = false;
                 _cachedPosSec = null;
                 _cachedDurSec = null;
-                if (_cachedArtJpeg is not null)
+                if (_cachedArtBytes is not null)
                 {
-                    _cachedArtJpeg = null;
+                    _cachedArtBytes = null;
                     _lastTrackKey = "";
                     _artVersion++;
                 }
@@ -85,8 +90,24 @@ public sealed class MediaController
             if (trackKey != _lastTrackKey)
             {
                 _lastTrackKey = trackKey;
-                _cachedArtJpeg = await ExtractThumbnailJpegAsync(props?.Thumbnail);
+                _artRetriesLeft = 6;
+                var (bytes, ct) = await ReadRawThumbnailAsync(props?.Thumbnail);
+                _cachedArtBytes = bytes;
+                _cachedArtContentType = ct;
+                if (bytes is not null) _artRetriesLeft = 0;
                 _artVersion++;
+            }
+            else if (_cachedArtBytes is null && _artRetriesLeft > 0)
+            {
+                _artRetriesLeft--;
+                var (bytes, ct) = await ReadRawThumbnailAsync(props?.Thumbnail);
+                if (bytes is not null)
+                {
+                    _cachedArtBytes = bytes;
+                    _cachedArtContentType = ct;
+                    _artRetriesLeft = 0;
+                    _artVersion++;
+                }
             }
         }
         catch
@@ -101,28 +122,21 @@ public sealed class MediaController
         return (_cachedTitle, _cachedArtist, _cachedPlaying, _artVersion, _cachedPosSec, _cachedDurSec);
     }
 
-    private static async Task<byte[]?> ExtractThumbnailJpegAsync(Windows.Storage.Streams.IRandomAccessStreamReference? thumbRef)
+    private static async Task<(byte[]? Bytes, string ContentType)> ReadRawThumbnailAsync(Windows.Storage.Streams.IRandomAccessStreamReference? thumbRef)
     {
-        if (thumbRef is null) return null;
+        if (thumbRef is null) return (null, "image/jpeg");
         try
         {
             using var winrtStream = await thumbRef.OpenReadAsync();
+            var contentType = string.IsNullOrWhiteSpace(winrtStream.ContentType) ? "image/jpeg" : winrtStream.ContentType;
             using var netStream = winrtStream.AsStreamForRead();
-            using var orig = new Bitmap(netStream);
-
-            const int size = 280;
-            using var resized = new Bitmap(size, size);
-            using (var g = Graphics.FromImage(resized))
-            {
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.DrawImage(orig, 0, 0, size, size);
-            }
-
             using var ms = new MemoryStream();
-            resized.Save(ms, ImageFormat.Jpeg);
-            return ms.ToArray();
+            await netStream.CopyToAsync(ms);
+            var arr = ms.ToArray();
+            if (arr.Length < 100) return (null, contentType);
+            return (arr, contentType);
         }
-        catch { return null; }
+        catch { return (null, "image/jpeg"); }
     }
 
     public async Task<bool> ExecuteCommandAsync(string action)

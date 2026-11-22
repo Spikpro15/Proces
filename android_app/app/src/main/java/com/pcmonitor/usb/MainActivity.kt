@@ -23,8 +23,10 @@ import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.GridLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -50,6 +52,7 @@ class MainActivity : AppCompatActivity() {
     private val mediaUrl = "http://127.0.0.1:8765/api/media"
     private val mediaArtUrl = "http://127.0.0.1:8765/api/media/art"
     private val macroUrl = "http://127.0.0.1:8765/api/macro"
+    private val updateApkUrl = "http://127.0.0.1:8765/api/update-apk"
 
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -82,9 +85,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rootContainer: View
     private lateinit var tvStatus: TextView
     private lateinit var tvGameName: TextView
+    private lateinit var btnUpdateApp: TextView
     private lateinit var metricsGrid: GridLayout
     private lateinit var tvMiniMedia: TextView
     private lateinit var mediaOverlay: View
+    private lateinit var mediaBody: LinearLayout
+    private lateinit var mediaRightCol: LinearLayout
     private lateinit var ivMediaBackdrop: ImageView
     private lateinit var ivMediaArt: ImageView
     private lateinit var tvMediaStatus: TextView
@@ -151,9 +157,12 @@ class MainActivity : AppCompatActivity() {
         rootContainer = findViewById(R.id.rootContainer)
         tvStatus = findViewById(R.id.tvStatus)
         tvGameName = findViewById(R.id.tvGameName)
+        btnUpdateApp = findViewById(R.id.btnUpdateApp)
         metricsGrid = findViewById(R.id.metricsGrid)
         tvMiniMedia = findViewById(R.id.tvMiniMedia)
         mediaOverlay = findViewById(R.id.mediaOverlay)
+        mediaBody = findViewById(R.id.mediaBody)
+        mediaRightCol = findViewById(R.id.mediaRightCol)
         ivMediaBackdrop = findViewById(R.id.ivMediaBackdrop)
         ivMediaArt = findViewById(R.id.ivMediaArt)
         tvMediaStatus = findViewById(R.id.tvMediaStatus)
@@ -167,11 +176,10 @@ class MainActivity : AppCompatActivity() {
         macroOverlay = findViewById(R.id.macroOverlay)
         macroGrid = findViewById(R.id.macroGrid)
 
-        // Crisp 22dp rounded corners on album art
         ivMediaArt.clipToOutline = true
         ivMediaArt.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, view.width, view.height, 40f)
+                outline.setRoundRect(0, 0, view.width, view.height, 36f)
             }
         }
 
@@ -182,6 +190,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnCloseMacros).setOnClickListener { showMacroOverlay(false) }
         tvMiniMedia.setOnClickListener { showMediaOverlay(true) }
         findViewById<View>(R.id.btnCloseMedia).setOnClickListener { showMediaOverlay(false) }
+        btnUpdateApp.setOnClickListener { triggerUsbSelfUpdate() }
 
         setupBouncyMediaBtn(findViewById(R.id.btnPrev), "prev")
         setupBouncyMediaBtn(btnPlayPause, "play_pause")
@@ -209,10 +218,59 @@ class MainActivity : AppCompatActivity() {
         loadSavedMetrics()
         rebuildGrid()
         rebuildMacroGrid()
+        applyMediaOrientationLayout()
         applyTheme()
         applyMediaAccent(mediaAccentColor)
         applyImmersiveMode()
         connectWebSocket()
+    }
+
+    private fun triggerUsbSelfUpdate() {
+        btnUpdateApp.text = "⏳ Обновляю..."
+        btnUpdateApp.isEnabled = false
+        val req = Request.Builder()
+            .url(updateApkUrl)
+            .post("{}".toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .build()
+        client.newCall(req).enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                mainHandler.post {
+                    btnUpdateApp.text = "⬇ Обновить"
+                    btnUpdateApp.isEnabled = true
+                    Toast.makeText(this@MainActivity, "Нет связи с ПК", Toast.LENGTH_SHORT).show()
+                }
+            }
+            override fun onResponse(call: okhttp3.Call, response: Response) {
+                val txt = response.body?.string() ?: ""
+                response.close()
+                mainHandler.post {
+                    btnUpdateApp.text = "⬇ Обновить"
+                    btnUpdateApp.isEnabled = true
+                    val ok = txt.contains("\"ok\":true")
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (ok) "Обновление установлено!" else "Ошибка обновления (проверь APK рядом с EXE)",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        })
+    }
+
+    private fun applyMediaOrientationLayout() {
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        mediaBody.orientation = if (isLandscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        val rightParams = mediaRightCol.layoutParams as LinearLayout.LayoutParams
+        if (isLandscape) {
+            rightParams.width = 0
+            rightParams.height = LinearLayout.LayoutParams.WRAP_CONTENT
+            rightParams.weight = 1f
+        } else {
+            rightParams.width = LinearLayout.LayoutParams.MATCH_PARENT
+            rightParams.height = LinearLayout.LayoutParams.WRAP_CONTENT
+            rightParams.weight = 0f
+        }
+        mediaRightCol.layoutParams = rightParams
     }
 
     private fun setupBouncyMediaBtn(view: View, action: String) {
@@ -328,8 +386,7 @@ class MainActivity : AppCompatActivity() {
             for (x in 0 until 16) {
                 val c = small.getPixel(x, y)
                 Color.colorToHSV(c, hsv)
-                val sat = hsv[1]
-                val v = hsv[2]
+                val sat = hsv[1]; val v = hsv[2]
                 if (v > 0.28f && sat > 0.25f) {
                     val score = sat * 1.4f + v * 0.6f
                     if (score > bestScore) {
@@ -346,8 +403,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun fastBlur(src: Bitmap, radius: Int): Bitmap {
-        val w = 48
-        val h = 48
+        val w = 48; val h = 48
         val bmp = Bitmap.createScaledBitmap(src, w, h, true)
         val pix = IntArray(w * h)
         bmp.getPixels(pix, 0, w, 0, 0, w, h)
@@ -358,8 +414,7 @@ class MainActivity : AppCompatActivity() {
                 for (x in 0 until w) {
                     var rs = 0; var gs = 0; var bs = 0; var cnt = 0
                     for (dx in -r..r) {
-                        val nx = (x + dx).coerceIn(0, w - 1)
-                        val c = pix[y * w + nx]
+                        val c = pix[y * w + (x + dx).coerceIn(0, w - 1)]
                         rs += Color.red(c); gs += Color.green(c); bs += Color.blue(c); cnt++
                     }
                     tmp[y * w + x] = Color.rgb(rs / cnt, gs / cnt, bs / cnt)
@@ -369,8 +424,7 @@ class MainActivity : AppCompatActivity() {
                 for (x in 0 until w) {
                     var rs = 0; var gs = 0; var bs = 0; var cnt = 0
                     for (dy in -r..r) {
-                        val ny = (y + dy).coerceIn(0, h - 1)
-                        val c = tmp[ny * w + x]
+                        val c = tmp[(y + dy).coerceIn(0, h - 1) * w + x]
                         rs += Color.red(c); gs += Color.green(c); bs += Color.blue(c); cnt++
                     }
                     pix[y * w + x] = Color.rgb(rs / cnt, gs / cnt, bs / cnt)
@@ -436,25 +490,19 @@ class MainActivity : AppCompatActivity() {
             val params = GridLayout.LayoutParams(
                 GridLayout.spec(idx / cols, 1f),
                 GridLayout.spec(idx % cols, 1f)
-            ).apply {
-                width = 0
-                height = 0
-                setMargins(10, 10, 10, 10)
-            }
+            ).apply { width = 0; height = 0; setMargins(10, 10, 10, 10) }
             btn.layoutParams = params
             macroGrid.addView(btn)
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        applyImmersiveMode()
-    }
+    override fun onResume() { super.onResume(); applyImmersiveMode() }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         rebuildGrid()
         rebuildMacroGrid()
+        applyMediaOrientationLayout()
         lastPayload?.let { updateUi(it) }
     }
 
@@ -510,9 +558,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveMetricsLocally() {
         getSharedPreferences("pc_monitor_prefs", MODE_PRIVATE)
-            .edit()
-            .putString("enabled_metrics", enabledMetrics.joinToString(","))
-            .apply()
+            .edit().putString("enabled_metrics", enabledMetrics.joinToString(",")).apply()
     }
 
     private fun rebuildGrid() {
@@ -538,11 +584,7 @@ class MainActivity : AppCompatActivity() {
             val params = GridLayout.LayoutParams(
                 GridLayout.spec(index / cols, 1f),
                 GridLayout.spec(index % cols, 1f)
-            ).apply {
-                width = 0
-                height = 0
-                setMargins(8, 8, 8, 8)
-            }
+            ).apply { width = 0; height = 0; setMargins(8, 8, 8, 8) }
             card.layoutParams = params
 
             val holder = CardHolder(
@@ -572,7 +614,6 @@ class MainActivity : AppCompatActivity() {
                     tvStatus.setTextColor(Color.parseColor("#3FB950"))
                 }
             }
-
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     val json = JSONObject(text)
@@ -580,7 +621,6 @@ class MainActivity : AppCompatActivity() {
                     mainHandler.post { updateUi(json) }
                 } catch (_: Exception) { }
             }
-
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = scheduleReconnect()
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = scheduleReconnect()
         })
@@ -589,13 +629,15 @@ class MainActivity : AppCompatActivity() {
     private fun scheduleReconnect() {
         if (isDestroyedFlag) return
         mainHandler.post {
-            tvStatus.text = "○ Ожидание ПК по USB..."
+            tvStatus.text = "○ Ожидание ПК..."
             tvStatus.setTextColor(Color.parseColor("#D29922"))
         }
         mainHandler.postDelayed({ connectWebSocket() }, 2000)
     }
 
     private fun updateUi(d: JSONObject) {
+        btnUpdateApp.visibility = if (d.optBoolean("pcApkAvailable", false)) View.VISIBLE else View.GONE
+
         val remoteArr = d.optJSONArray("enabledMetrics")
         if (remoteArr != null && remoteArr.length() > 0) {
             val remoteList = mutableListOf<String>()
@@ -634,7 +676,6 @@ class MainActivity : AppCompatActivity() {
         val game = d.optString("activeGame", "")
         tvGameName.text = if (game.isNotEmpty() && game != "null") "Игра: $game" else ""
 
-        // Next-Gen Media Player updates
         val mTitle = if (d.isNull("mediaTitle")) "" else d.optString("mediaTitle", "")
         val mArtist = if (d.isNull("mediaArtist")) "" else d.optString("mediaArtist", "")
         val mPlaying = d.optBoolean("mediaPlaying", false)
@@ -650,8 +691,8 @@ class MainActivity : AppCompatActivity() {
         if (lastMediaPlaying != mPlaying) {
             lastMediaPlaying = mPlaying
             audioVisualizer.setPlaying(mPlaying && mTitle.isNotEmpty())
-            val scale = if (mPlaying) 1.0f else 0.88f
-            ivMediaArt.animate().scaleX(scale).scaleY(scale).setDuration(260).start()
+            val scale = if (mPlaying) 1.0f else 0.90f
+            ivMediaArt.animate().scaleX(scale).scaleY(scale).setDuration(240).start()
         }
 
         if (mTitle.isNotEmpty()) {

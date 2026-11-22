@@ -10,6 +10,7 @@ static class Program
         ApplicationConfiguration.Initialize();
 
         var baseDir = AppContext.BaseDirectory;
+        var apkPath = Path.Combine(baseDir, "PCMonitor-Android.apk");
         var config = new ConfigManager(baseDir);
         var port = config.Current.Port;
 
@@ -20,7 +21,7 @@ static class Program
         using var adb = new AdbBridge(baseDir, port);
         var sessions = new SessionAnalyzer(baseDir);
         var media = new MediaController();
-        using var server = new TelemetryServer(port, config, sessions, media);
+        using var server = new TelemetryServer(port, config, sessions, media, adb, baseDir);
 
         fps.Start();
         adb.Start();
@@ -32,12 +33,17 @@ static class Program
             while (!cts.Token.IsCancellationRequested)
             {
                 var cfg = config.Current;
+                bool apkExists = File.Exists(apkPath);
+                string? apkStamp = apkExists ? File.GetLastWriteTimeUtc(apkPath).Ticks.ToString() : null;
+
                 var payload = new TelemetryPayload
                 {
                     Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     UsbConnected = adb.IsConnected,
                     DeviceSerial = adb.DeviceSerial,
                     PresentMonActive = fps.IsRunning,
+                    PcApkAvailable = apkExists,
+                    PcApkStamp = apkStamp,
                     Theme = cfg.Theme,
                     FontScale = cfg.FontScale,
                     EnabledMetrics = cfg.EnabledMetrics,
@@ -89,6 +95,12 @@ static class Program
         {
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
         });
+        menu.Items.Add("Обновить APK на телефоне по USB", null, async (_, _) =>
+        {
+            var (ok, msg) = await adb.InstallApkAsync(apkPath);
+            tray.ShowBalloonTip(3000, ok ? "APK обновлён" : "Ошибка обновления APK", msg,
+                ok ? ToolTipIcon.Info : ToolTipIcon.Warning);
+        });
         menu.Items.Add("Открыть папку отчётов", null, (_, _) =>
         {
             Process.Start(new ProcessStartInfo(sessions.ReportsDir) { UseShellExecute = true });
@@ -122,8 +134,8 @@ static class Program
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
         };
 
-        tray.ShowBalloonTip(2500, "PC Monitor USB v5 запущен",
-            "Свайп вверх — обновлённый плеер, свайп влево — кнопки Stream Deck.", ToolTipIcon.Info);
+        tray.ShowBalloonTip(2500, "PC Monitor USB v6 запущен",
+            "APK теперь обновляется в 1 клик по USB прямо с телефона или ПК.", ToolTipIcon.Info);
 
         Application.Run();
         cts.Cancel();

@@ -2,10 +2,6 @@ using System.Diagnostics;
 
 namespace PCMonitorAgent;
 
-/// <summary>
-/// Watches for a USB-connected Android phone and maintains `adb reverse tcp:PORT tcp:PORT`
-/// so the Android APK talks directly to http://127.0.0.1:PORT over the USB cable.
-/// </summary>
 public sealed class AdbBridge : IDisposable
 {
     private readonly string _adbPath;
@@ -27,6 +23,24 @@ public sealed class AdbBridge : IDisposable
     public void Start() => Task.Run(() => WatchLoop(_cts.Token));
 
     public void ForceReconnect() => Task.Run(CheckAndForwardOnce);
+
+    public async Task<(bool Ok, string Message)> InstallApkAsync(string apkPath)
+    {
+        if (!File.Exists(apkPath))
+            return (false, "Файл PCMonitor-Android.apk не найден рядом с PCMonitorAgent.exe");
+
+        var serial = DeviceSerial;
+        var prefix = string.IsNullOrEmpty(serial) ? "" : $"-s {serial} ";
+        var output = await RunAdbAsync($"{prefix}install -r \"{apkPath}\"");
+        if (output is not null && output.Contains("Success", StringComparison.OrdinalIgnoreCase))
+        {
+            await Task.Delay(500);
+            await RunAdbAsync($"{prefix}reverse tcp:{_port} tcp:{_port}");
+            await RunAdbAsync($"{prefix}shell am start -n com.pcmonitor.usb/.MainActivity");
+            return (true, "Приложение на телефоне обновлено и перезапущено!");
+        }
+        return (false, string.IsNullOrWhiteSpace(output) ? "Не удалось установить APK через ADB" : output.Trim());
+    }
 
     private async Task WatchLoop(CancellationToken ct)
     {
@@ -50,13 +64,13 @@ public sealed class AdbBridge : IDisposable
             }
 
             string? serial = null;
-          foreach (var rawLine in output.Split('\n'))
-         {
-             var line = rawLine.Trim();
-             if (line.EndsWith("\tdevice", StringComparison.OrdinalIgnoreCase) ||
-                 line.Contains(" device", StringComparison.OrdinalIgnoreCase))
-             {
-                 var parts = line.Split(new[] { '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var rawLine in output.Split('\n'))
+            {
+                var line = rawLine.Trim();
+                if (line.EndsWith("\tdevice", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains(" device", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parts = line.Split(new[] { '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length >= 2 && parts[1] == "device")
                     {
                         serial = parts[0];
@@ -100,13 +114,11 @@ public sealed class AdbBridge : IDisposable
             using var proc = Process.Start(psi);
             if (proc is null) return null;
             var stdout = await proc.StandardOutput.ReadToEndAsync();
+            var stderr = await proc.StandardError.ReadToEndAsync();
             await proc.WaitForExitAsync();
-            return stdout;
+            return string.IsNullOrWhiteSpace(stdout) ? stderr : stdout;
         }
-        catch
-        {
-            return null;
-        }
+        catch { return null; }
     }
 
     public void Dispose() => _cts.Cancel();

@@ -31,12 +31,7 @@ public class AppConfig
     [JsonPropertyName("enabledMetrics")]
     public List<string> EnabledMetrics { get; set; } = new()
     {
-        "fps",
-        "cpu_load",
-        "cpu_temp",
-        "gpu_load",
-        "gpu_temp",
-        "ram_load"
+        "fps", "cpu_load", "cpu_temp", "gpu_load", "gpu_temp", "ram_load"
     };
 
     [JsonPropertyName("macros")]
@@ -158,6 +153,12 @@ public class TelemetryPayload
 
     [JsonPropertyName("mediaDurSec")]
     public double? MediaDurSec { get; set; }
+
+    [JsonPropertyName("pcApkAvailable")]
+    public bool PcApkAvailable { get; set; }
+
+    [JsonPropertyName("pcApkStamp")]
+    public string? PcApkStamp { get; set; }
 
     [JsonPropertyName("theme")]
     public string Theme { get; set; } = "midnight";

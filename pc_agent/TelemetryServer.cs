@@ -12,15 +12,19 @@ public sealed class TelemetryServer : IDisposable
     private readonly ConfigManager _config;
     private readonly SessionAnalyzer _sessions;
     private readonly MediaController _media;
+    private readonly AdbBridge _adb;
+    private readonly string _apkPath;
     private readonly ConcurrentDictionary<Guid, WebSocket> _sockets = new();
     private readonly CancellationTokenSource _cts = new();
     private string _latestJson = "{}";
 
-    public TelemetryServer(int port, ConfigManager config, SessionAnalyzer sessions, MediaController media)
+    public TelemetryServer(int port, ConfigManager config, SessionAnalyzer sessions, MediaController media, AdbBridge adb, string baseDir)
     {
         _config = config;
         _sessions = sessions;
         _media = media;
+        _adb = adb;
+        _apkPath = Path.Combine(baseDir, "PCMonitor-Android.apk");
         _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
     }
 
@@ -99,12 +103,19 @@ public sealed class TelemetryServer : IDisposable
             return;
         }
 
+        if (path == "/api/update-apk" && req.HttpMethod == "POST")
+        {
+            var (ok, msg) = await _adb.InstallApkAsync(_apkPath);
+            await WriteJsonAsync(res, JsonSerializer.Serialize(new { ok, message = msg }));
+            return;
+        }
+
         if (path == "/api/media/art" && req.HttpMethod == "GET")
         {
-            var art = _media.CurrentArtJpeg;
+            var art = _media.CurrentArtBytes;
             if (art is not null && art.Length > 0)
             {
-                res.ContentType = "image/jpeg";
+                res.ContentType = _media.CurrentArtContentType;
                 res.Headers.Add("Cache-Control", "no-store");
                 await res.OutputStream.WriteAsync(art, ct);
                 res.Close();
@@ -384,13 +395,14 @@ public sealed class TelemetryServer : IDisposable
 </head>
 <body>
   <h1>PC Monitor USB — студия экрана</h1>
-  <div class="sub">Перетаскивай плитки мышкой прямо в мини-телефоне, выбирай тему, настраивай кнопки Stream Deck и смотри отчёты просадок.</div>
+  <div class="sub">Перетаскивай плитки мышкой, обновляй APK на телефоне по USB в 1 клик, выбирай тему и смотри отчёты просадок.</div>
 
   <div class="topBar">
     <div class="pill" id="usb">USB: проверка...</div>
     <div class="pill" id="fpsState">PresentMon: проверка...</div>
     <button class="btn" id="orientBtn" onclick="toggleOrient()">⟳ Вид: Горизонтальный</button>
     <button class="btn" id="autoBtn" onclick="toggleAutoStart()">Автозапуск: ...</button>
+    <button class="btn btnGreen" id="apkBtn" onclick="updatePhoneApk()">📲 Обновить APK по USB</button>
   </div>
 
   <div class="phoneWrap">
@@ -479,6 +491,20 @@ async function init() {
   pollSession();
 }
 
+async function updatePhoneApk() {
+  const b = document.getElementById('apkBtn');
+  b.disabled = true;
+  b.textContent = '⏳ Устанавливаю на телефон...';
+  try {
+    const r = await fetch('/api/update-apk', { method: 'POST' });
+    const d = await r.json();
+    b.textContent = d.ok ? '✓ Обновлено!' : ('✕ ' + (d.message || 'Ошибка'));
+  } catch {
+    b.textContent = '✕ Ошибка связи';
+  }
+  setTimeout(() => { b.disabled = false; b.textContent = '📲 Обновить APK по USB'; }, 3500);
+}
+
 async function pollAutoStart() {
   try {
     const r = await fetch('/api/autostart');
@@ -509,11 +535,7 @@ function toggleOrient() {
   updateGridCols();
 }
 
-function setTheme(t) {
-  theme = t;
-  applyThemeUI();
-  saveConfig();
-}
+function setTheme(t) { theme = t; applyThemeUI(); saveConfig(); }
 
 function setFontScale(v) {
   fontScale = parseFloat(v);
@@ -525,8 +547,7 @@ function setFontScale(v) {
 function applyThemeUI() {
   const th = THEMES[theme] || THEMES.midnight;
   const pf = document.getElementById('phoneFrame');
-  pf.style.background = th.bg;
-  pf.style.borderColor = th.border;
+  pf.style.background = th.bg; pf.style.borderColor = th.border;
   document.querySelectorAll('.tile').forEach(el => { el.style.background = th.card; el.style.borderColor = th.border; });
   for (const k of Object.keys(THEMES)) {
     const b = document.getElementById('th_' + k);
@@ -541,12 +562,7 @@ function updateGridCols() {
   grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
 }
 
-function renderAll() {
-  renderChips();
-  renderPhone();
-  applyThemeUI();
-  updateValues();
-}
+function renderAll() { renderChips(); renderPhone(); applyThemeUI(); updateValues(); }
 
 function renderChips() {
   document.getElementById('chips').innerHTML = allMetrics.map(m => {
@@ -605,8 +621,7 @@ function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('over
 function onDragLeave(e) { e.currentTarget.classList.remove('over'); }
 function onDragEnd(e) { e.currentTarget.classList.remove('dragging'); document.querySelectorAll('.tile.over').forEach(el => el.classList.remove('over')); }
 async function onDrop(e, targetId) {
-  e.preventDefault();
-  e.currentTarget.classList.remove('over');
+  e.preventDefault(); e.currentTarget.classList.remove('over');
   if (!dragId || dragId === targetId) return;
   const from = enabled.indexOf(dragId), to = enabled.indexOf(targetId);
   if (from < 0 || to < 0) return;
@@ -673,8 +688,7 @@ function setTile(id, val, sub, numForSpark, maxVal, color) {
   const vEl = document.getElementById('pv_' + id);
   const sEl = document.getElementById('ps_' + id);
   if (!vEl) return;
-  vEl.textContent = val;
-  vEl.style.color = color;
+  vEl.textContent = val; vEl.style.color = color;
   if (sEl) sEl.textContent = sub || '';
   pushSpark(id, numForSpark, maxVal, color);
 }
