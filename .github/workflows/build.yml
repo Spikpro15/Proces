@@ -21,23 +21,88 @@ jobs:
         run: gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: PCMonitor-Android-APK
+          name: android-apk-temp
           path: android_app/app/build/outputs/apk/debug/app-debug.apk
 
-  build-pc-agent:
+  build-bundle:
+    needs: build-android-apk
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Publish Standalone Windows EXE
+
+      - name: Publish Windows PC Agent
         working-directory: pc_agent
         run: dotnet publish -c Release -r win-x64 --self-contained true -o publish
-      - name: Copy helper script
-        shell: pwsh
-        run: Copy-Item pc_agent/setup_tools.bat pc_agent/publish/
-      - uses: actions/upload-artifact@v4
+
+      - name: Download compiled Android APK
+        uses: actions/download-artifact@v4
         with:
-          name: PCMonitor-Windows-EXE
+          name: android-apk-temp
+          path: pc_agent/publish
+
+      - name: Bundle ADB, PresentMon, PawnIO and Russian guide
+        shell: pwsh
+        run: |
+          $pub = "pc_agent/publish"
+          $tools = "$pub/tools"
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+
+          if (Test-Path "$pub/app-debug.apk") {
+            Move-Item "$pub/app-debug.apk" "$pub/PCMonitor-Android.apk" -Force
+          }
+
+          $headers = @{ "User-Agent" = "PCMonitorUSB-Builder" }
+
+          Write-Host "Downloading Android Platform-Tools (ADB)..."
+          Invoke-WebRequest -Uri "https://dl.google.com/android/repository/platform-tools-latest-windows.zip" -OutFile "$tools/pt.zip"
+          Expand-Archive -Path "$tools/pt.zip" -DestinationPath $tools -Force
+          Remove-Item "$tools/pt.zip" -Force
+
+          Write-Host "Downloading Intel PresentMon..."
+          try {
+            $pmRel = Invoke-RestMethod -Uri "https://api.github.com/repos/GameTechDev/PresentMon/releases/latest" -Headers $headers
+            $pmAsset = $pmRel.assets | Where-Object { $_.name -like "PresentMon-*.exe" } | Select-Object -First 1
+            if ($pmAsset) {
+              Invoke-WebRequest -Uri $pmAsset.browser_download_url -OutFile "$tools/PresentMon.exe"
+            }
+          } catch { Write-Warning "PresentMon download skipped: $_" }
+
+          Write-Host "Downloading PawnIO installer..."
+          try {
+            $pRel = Invoke-RestMethod -Uri "https://api.github.com/repos/namazso/PawnIO.Setup/releases/latest" -Headers $headers
+            $pAsset = $pRel.assets | Where-Object { $_.name -like "*setup*.exe" } | Select-Object -First 1
+            if ($pAsset) {
+              Invoke-WebRequest -Uri $pAsset.browser_download_url -OutFile "$pub/PawnIO_setup.exe"
+            }
+          } catch { Write-Warning "PawnIO download skipped: $_" }
+
+          $guide = @"
+          PC Monitor USB — быстрый запуск (3 шага)
+
+          1. Установи драйвер для температуры CPU:
+             Запусти PawnIO_setup.exe -> нажми левую иконку (монитор со стрелкой вниз) -> закрой окно.
+
+          2. Поставь приложение на Android:
+             - Перекинь PCMonitor-Android.apk на телефон и установи.
+             - Включи Отладку по USB: Настройки -> О телефоне -> 7 раз нажми "Номер сборки" (или "Версия MIUI"),
+               затем Настройки -> Для разработчиков -> Отладка по USB (Вкл).
+             - Подключи телефон кабелем к ПК и на экране телефона разреши отладку ("Всегда разрешать" -> ОК).
+
+          3. Запусти мониторинг:
+             - Запусти PCMonitorAgent.exe (подтверди права администратора) — он свернётся в трей возле часов.
+             - Открой PC Monitor USB на телефоне.
+
+          Фишки:
+          - Двойной клик по иконке в трее (или http://127.0.0.1:8765/) открывает редактор экрана и отчёты просадок FPS.
+          - Свайп вверх на телефоне открывает плеер Windows (трек, переключение, громкость).
+          "@
+          Set-Content -Path "$pub/КАК_ЗАПУСТИТЬ.txt" -Value $guide -Encoding UTF8
+
+      - name: Upload Ready-to-Use Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: PCMonitorUSB-ReadyToUse
           path: pc_agent/publish/
