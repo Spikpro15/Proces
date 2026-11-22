@@ -19,7 +19,8 @@ static class Program
         using var fps = new FpsTracker(baseDir);
         using var adb = new AdbBridge(baseDir, port);
         var sessions = new SessionAnalyzer(baseDir);
-        using var server = new TelemetryServer(port, config, sessions);
+        var media = new MediaController();
+        using var server = new TelemetryServer(port, config, sessions, media);
 
         fps.Start();
         adb.Start();
@@ -52,6 +53,15 @@ static class Program
                 }
                 catch { }
 
+                try
+                {
+                    var (mTitle, mArtist, mPlaying) = await media.GetMediaInfoAsync();
+                    payload.MediaTitle = mTitle;
+                    payload.MediaArtist = mArtist;
+                    payload.MediaPlaying = mPlaying;
+                }
+                catch { }
+
                 try { sessions.OnTick(payload, activePid); } catch { }
                 try { await server.BroadcastAsync(payload); } catch { }
 
@@ -68,7 +78,7 @@ static class Program
         };
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Настройки и отчёты (в браузере)", null, (_, _) =>
+        menu.Items.Add("Редактор экрана и отчёты", null, (_, _) =>
         {
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
         });
@@ -93,7 +103,7 @@ static class Program
         };
 
         tray.ShowBalloonTip(2500, "PC Monitor USB запущен",
-            "Подключи Android по USB и открой приложение на телефоне.", ToolTipIcon.Info);
+            "Открой редактор в трее или свайпни вверх на телефоне для плеера.", ToolTipIcon.Info);
 
         Application.Run();
         cts.Cancel();

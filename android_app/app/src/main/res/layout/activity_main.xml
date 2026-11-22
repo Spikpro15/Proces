@@ -1,93 +1,251 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/rootLayout"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootContainer"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#090C10"
-    android:orientation="vertical"
-    android:padding="10dp">
+    android:background="#090C10">
 
     <LinearLayout
+        android:id="@+id/rootLayout"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingBottom="8dp">
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="10dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:id="@+id/tvStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/status_pill_bg"
+                android:paddingLeft="12dp"
+                android:paddingTop="5dp"
+                android:paddingRight="12dp"
+                android:paddingBottom="5dp"
+                android:text="○ Ожидание ПК по USB..."
+                android:textColor="#D29922"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvGameName"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:paddingLeft="12dp"
+                android:paddingRight="8dp"
+                android:text=""
+                android:textColor="#8B949E"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/btnDim"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/status_pill_bg"
+                android:paddingLeft="10dp"
+                android:paddingTop="5dp"
+                android:paddingRight="10dp"
+                android:paddingBottom="5dp"
+                android:text="☀"
+                android:textColor="#C9D1D9"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/btnRotate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/status_pill_bg"
+                android:paddingLeft="10dp"
+                android:paddingTop="5dp"
+                android:paddingRight="10dp"
+                android:paddingBottom="5dp"
+                android:text="⟳"
+                android:textColor="#C9D1D9"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/btnSettings"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/status_pill_bg"
+                android:paddingLeft="12dp"
+                android:paddingTop="5dp"
+                android:paddingRight="12dp"
+                android:paddingBottom="5dp"
+                android:text="⚙ Виджеты"
+                android:textColor="#E6EDF3"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <GridLayout
+            android:id="@+id/metricsGrid"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:alignmentMode="alignBounds"
+            android:useDefaultMargins="false" />
 
         <TextView
-            android:id="@+id/tvStatus"
+            android:id="@+id/tvMiniMedia"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="1"
+            android:paddingTop="4dp"
+            android:text="⌃ Свайп вверх — плеер Windows"
+            android:textColor="#6E7681"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <!-- Swipe-Up Windows Media Player Overlay -->
+    <LinearLayout
+        android:id="@+id/mediaOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#EE0B0F15"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/btnCloseMedia"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="@drawable/status_pill_bg"
-            android:paddingLeft="12dp"
-            android:paddingTop="5dp"
-            android:paddingRight="12dp"
-            android:paddingBottom="5dp"
-            android:text="○ Ожидание ПК по USB..."
-            android:textColor="#D29922"
+            android:paddingLeft="16dp"
+            android:paddingTop="6dp"
+            android:paddingRight="16dp"
+            android:paddingBottom="6dp"
+            android:text="⌄ Свайп вниз — вернуться к мониторингу"
+            android:textColor="#8B949E"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvMediaStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="Плеер Windows"
+            android:textColor="#58A6FF"
             android:textSize="13sp"
             android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/tvGameName"
-            android:layout_width="0dp"
+            android:id="@+id/tvMediaTitle"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
+            android:layout_marginTop="8dp"
             android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="2"
+            android:text="Ничего не играет"
+            android:textColor="#E6EDF3"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvMediaArtist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:ellipsize="end"
+            android:gravity="center"
             android:maxLines="1"
-            android:paddingLeft="12dp"
-            android:paddingRight="8dp"
             android:text=""
             android:textColor="#8B949E"
-            android:textSize="13sp" />
+            android:textSize="16sp" />
 
-        <TextView
-            android:id="@+id/btnDim"
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="6dp"
-            android:background="@drawable/status_pill_bg"
-            android:paddingLeft="10dp"
-            android:paddingTop="5dp"
-            android:paddingRight="10dp"
-            android:paddingBottom="5dp"
-            android:text="☀"
-            android:textColor="#C9D1D9"
-            android:textSize="14sp" />
+            android:layout_marginTop="24dp"
+            android:gravity="center"
+            android:orientation="horizontal">
 
-        <TextView
-            android:id="@+id/btnRotate"
+            <TextView
+                android:id="@+id/btnPrev"
+                android:layout_width="76dp"
+                android:layout_height="64dp"
+                android:layout_marginEnd="16dp"
+                android:background="@drawable/card_bg"
+                android:gravity="center"
+                android:text="⏮"
+                android:textColor="#E6EDF3"
+                android:textSize="28sp" />
+
+            <TextView
+                android:id="@+id/btnPlayPause"
+                android:layout_width="96dp"
+                android:layout_height="72dp"
+                android:layout_marginEnd="16dp"
+                android:background="@drawable/card_bg"
+                android:gravity="center"
+                android:text="⏯"
+                android:textColor="#58A6FF"
+                android:textSize="34sp" />
+
+            <TextView
+                android:id="@+id/btnNext"
+                android:layout_width="76dp"
+                android:layout_height="64dp"
+                android:background="@drawable/card_bg"
+                android:gravity="center"
+                android:text="⏭"
+                android:textColor="#E6EDF3"
+                android:textSize="28sp" />
+        </LinearLayout>
+
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="6dp"
-            android:background="@drawable/status_pill_bg"
-            android:paddingLeft="10dp"
-            android:paddingTop="5dp"
-            android:paddingRight="10dp"
-            android:paddingBottom="5dp"
-            android:text="⟳"
-            android:textColor="#C9D1D9"
-            android:textSize="14sp" />
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:orientation="horizontal">
 
-        <TextView
-            android:id="@+id/btnSettings"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="@drawable/status_pill_bg"
-            android:paddingLeft="12dp"
-            android:paddingTop="5dp"
-            android:paddingRight="12dp"
-            android:paddingBottom="5dp"
-            android:text="⚙ Виджеты"
-            android:textColor="#E6EDF3"
-            android:textSize="13sp" />
+            <TextView
+                android:id="@+id/btnVolDown"
+                android:layout_width="68dp"
+                android:layout_height="44dp"
+                android:layout_marginEnd="10dp"
+                android:background="@drawable/status_pill_bg"
+                android:gravity="center"
+                android:text="🔉 −"
+                android:textColor="#C9D1D9"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/btnVolMute"
+                android:layout_width="56dp"
+                android:layout_height="44dp"
+                android:layout_marginEnd="10dp"
+                android:background="@drawable/status_pill_bg"
+                android:gravity="center"
+                android:text="🔇"
+                android:textColor="#C9D1D9"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/btnVolUp"
+                android:layout_width="68dp"
+                android:layout_height="44dp"
+                android:background="@drawable/status_pill_bg"
+                android:gravity="center"
+                android:text="🔊 +"
+                android:textColor="#C9D1D9"
+                android:textSize="15sp" />
+        </LinearLayout>
     </LinearLayout>
-
-    <GridLayout
-        android:id="@+id/metricsGrid"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:alignmentMode="alignBounds"
-        android:useDefaultMargins="false" />
-</LinearLayout>
+</FrameLayout>

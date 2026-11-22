@@ -112,6 +112,15 @@ public class TelemetryPayload
     [JsonPropertyName("ramTotalGb")]
     public double? RamTotalGb { get; set; }
 
+    [JsonPropertyName("mediaTitle")]
+    public string? MediaTitle { get; set; }
+
+    [JsonPropertyName("mediaArtist")]
+    public string? MediaArtist { get; set; }
+
+    [JsonPropertyName("mediaPlaying")]
+    public bool MediaPlaying { get; set; }
+
     [JsonPropertyName("enabledMetrics")]
     public List<string> EnabledMetrics { get; set; } = new();
 }
