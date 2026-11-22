@@ -10,13 +10,15 @@ public sealed class TelemetryServer : IDisposable
 {
     private readonly HttpListener _listener = new();
     private readonly ConfigManager _config;
+    private readonly SessionAnalyzer _sessions;
     private readonly ConcurrentDictionary<Guid, WebSocket> _sockets = new();
     private readonly CancellationTokenSource _cts = new();
     private string _latestJson = "{}";
 
-    public TelemetryServer(int port, ConfigManager config)
+    public TelemetryServer(int port, ConfigManager config, SessionAnalyzer sessions)
     {
         _config = config;
+        _sessions = sessions;
         _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
     }
 
@@ -92,6 +94,40 @@ public sealed class TelemetryServer : IDisposable
         if (path == "/api/metrics" && req.HttpMethod == "GET")
         {
             await WriteJsonAsync(res, _latestJson);
+            return;
+        }
+
+        if (path == "/api/session" && req.HttpMethod == "GET")
+        {
+            await WriteJsonAsync(res, JsonSerializer.Serialize(new
+            {
+                session = _sessions.GetStatus(),
+                reports = _sessions.ListReports()
+            }));
+            return;
+        }
+
+        if (path == "/api/session/save" && req.HttpMethod == "POST")
+        {
+            var file = _sessions.SaveReportNow();
+            await WriteJsonAsync(res, JsonSerializer.Serialize(new { ok = file is not null, file }));
+            return;
+        }
+
+        if (path.StartsWith("/reports/", StringComparison.OrdinalIgnoreCase))
+        {
+            var fileName = Path.GetFileName(Uri.UnescapeDataString(path["/reports/".Length..]));
+            var fullPath = Path.Combine(_sessions.ReportsDir, fileName);
+            if (File.Exists(fullPath))
+            {
+                res.ContentType = "text/html; charset=utf-8";
+                var bytes = await File.ReadAllBytesAsync(fullPath, ct);
+                await res.OutputStream.WriteAsync(bytes, ct);
+                res.Close();
+                return;
+            }
+            res.StatusCode = 404;
+            res.Close();
             return;
         }
 
@@ -190,10 +226,11 @@ public sealed class TelemetryServer : IDisposable
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PC Monitor USB — Настройки</title>
+<title>PC Monitor USB — Настройки и отчёты</title>
 <style>
-  body { background:#0d1117; color:#e6edf3; font-family:system-ui,-apple-system,sans-serif; margin:0; padding:24px; max-width:720px; margin:auto; }
+  body { background:#0d1117; color:#e6edf3; font-family:system-ui,-apple-system,sans-serif; margin:0; padding:24px; max-width:760px; margin:auto; }
   h1 { font-size:22px; margin:0 0 8px; }
+  h2 { font-size:17px; margin:24px 0 10px; }
   .sub { color:#8b949e; margin-bottom:20px; font-size:14px; }
   .status { display:flex; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
   .pill { background:#161b22; border:1px solid #30363d; padding:8px 14px; border-radius:999px; font-size:13px; }
@@ -205,16 +242,29 @@ public sealed class TelemetryServer : IDisposable
   input[type=checkbox] { width:18px; height:18px; accent-color:#58a6ff; }
   .desc { color:#8b949e; font-size:12px; display:block; }
   .val { font-family:ui-monospace,Consolas,monospace; color:#58a6ff; font-size:15px; min-width:90px; text-align:right; }
+  button { background:#238636; color:#fff; border:none; border-radius:8px; padding:8px 14px; cursor:pointer; font-weight:600; font-size:13px; }
+  button:hover { background:#2ea043; }
+  a { color:#58a6ff; text-decoration:none; }
+  a:hover { text-decoration:underline; }
 </style>
 </head>
 <body>
   <h1>PC Monitor USB</h1>
-  <div class="sub">Выбери показатели, которые будут отображаться на экране телефона. Изменения применяются мгновенно.</div>
+  <div class="sub">Выбери показатели для экрана телефона или открой разбор просадок после игры.</div>
   <div class="status">
     <div class="pill" id="usb">USB: проверка...</div>
     <div class="pill" id="fpsState">PresentMon: проверка...</div>
   </div>
   <div class="card" id="list">Загрузка...</div>
+
+  <h2>Игровой сеанс и отчёты просадок</h2>
+  <div class="card">
+    <div class="row">
+      <div id="sessInfo">Нет активной игры — запусти игру, запись начнётся автоматически.</div>
+      <button onclick="saveReport()">Сохранить отчёт сейчас</button>
+    </div>
+    <div id="reportsList" style="padding-top:10px;font-size:13px;color:#8b949e">Сохранённых отчётов пока нет.</div>
+  </div>
 <script>
 let enabled = [];
 let allMetrics = [];
@@ -226,7 +276,9 @@ async function init() {
   allMetrics = data.allMetrics;
   render();
   setInterval(poll, 1000);
+  setInterval(pollSession, 3000);
   poll();
+  pollSession();
 }
 
 function render() {
@@ -250,6 +302,30 @@ async function toggle(id, on) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabledMetrics: enabled })
   });
+}
+
+async function saveReport() {
+  const r = await fetch('/api/session/save', { method: 'POST' });
+  const d = await r.json();
+  await pollSession();
+  if (d.ok && d.file) window.open('/reports/' + encodeURIComponent(d.file), '_blank');
+}
+
+async function pollSession() {
+  try {
+    const r = await fetch('/api/session');
+    const d = await r.json();
+    const s = d.session;
+    document.getElementById('sessInfo').innerHTML = s.active
+      ? `<strong>${s.gameName}</strong> · ${s.durationMin} мин · средний FPS: <strong>${s.avgFps ?? '--'}</strong> · просадок: <strong>${s.dropsCount}</strong>`
+      : 'Нет активной игры — запусти игру, запись начнётся автоматически (альт-табы не сбрасывают сеанс).';
+
+    const rep = document.getElementById('reportsList');
+    if (d.reports && d.reports.length > 0) {
+      rep.innerHTML = '<strong>Сохранённые отчёты (папка reports\\):</strong><br>' +
+        d.reports.map(f => `<div style="padding:4px 0"><a href="/reports/${encodeURIComponent(f)}" target="_blank">${f}</a></div>`).join('');
+    }
+  } catch {}
 }
 
 async function poll() {

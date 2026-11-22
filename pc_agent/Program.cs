@@ -18,7 +18,8 @@ static class Program
 
         using var fps = new FpsTracker(baseDir);
         using var adb = new AdbBridge(baseDir, port);
-        using var server = new TelemetryServer(port, config);
+        var sessions = new SessionAnalyzer(baseDir);
+        using var server = new TelemetryServer(port, config, sessions);
 
         fps.Start();
         adb.Start();
@@ -39,15 +40,19 @@ static class Program
                 };
 
                 try { hw?.ReadInto(payload); } catch { }
+
+                int? activePid = null;
                 try
                 {
-                    var (curFps, low1, game) = fps.GetCurrentFps();
+                    var (curFps, low1, game, pid) = fps.GetCurrentFps();
                     payload.Fps = curFps;
                     payload.Fps1Low = low1;
                     payload.ActiveGame = game;
+                    activePid = pid;
                 }
                 catch { }
 
+                try { sessions.OnTick(payload, activePid); } catch { }
                 try { await server.BroadcastAsync(payload); } catch { }
 
                 try { await Task.Delay(config.Current.RefreshMs, cts.Token); }
@@ -63,15 +68,20 @@ static class Program
         };
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Настройки виджетов (в браузере)", null, (_, _) =>
+        menu.Items.Add("Настройки и отчёты (в браузере)", null, (_, _) =>
         {
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
+        });
+        menu.Items.Add("Открыть папку отчётов", null, (_, _) =>
+        {
+            Process.Start(new ProcessStartInfo(sessions.ReportsDir) { UseShellExecute = true });
         });
         menu.Items.Add("Переподключить USB (ADB)", null, (_, _) => adb.ForceReconnect());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Выход", null, (_, _) =>
         {
             cts.Cancel();
+            sessions.FlushOnExit();
             tray.Visible = false;
             Application.Exit();
         });
@@ -87,6 +97,7 @@ static class Program
 
         Application.Run();
         cts.Cancel();
+        sessions.FlushOnExit();
         hw?.Dispose();
     }
 }

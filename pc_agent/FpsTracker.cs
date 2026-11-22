@@ -5,10 +5,6 @@ using System.Runtime.InteropServices;
 
 namespace PCMonitorAgent;
 
-/// <summary>
-/// Autonomous in-game FPS tracker powered by Intel PresentMon CLI (ETW).
-/// Does not inject DLLs into games and does not require RTSS / MSI Afterburner.
-/// </summary>
 public sealed class FpsTracker : IDisposable
 {
     private readonly string _presentMonPath;
@@ -20,7 +16,8 @@ public sealed class FpsTracker : IDisposable
     {
         "explorer.exe", "dwm.exe", "SearchHost.exe", "ShellExperienceHost.exe",
         "StartMenuExperienceHost.exe", "TextInputHost.exe", "ApplicationFrameHost.exe",
-        "LockApp.exe", "PCMonitorAgent.exe", "Taskmgr.exe", "WindowsTerminal.exe"
+        "LockApp.exe", "PCMonitorAgent.exe", "Taskmgr.exe", "WindowsTerminal.exe",
+        "obs64.exe", "obs32.exe", "Discord.exe"
     };
 
     public bool IsRunning { get; private set; }
@@ -113,12 +110,12 @@ public sealed class FpsTracker : IDisposable
                     if (!double.TryParse(cols[msIdx].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double ms)) continue;
                     if (ms <= 0.1 || ms > 2000.0) continue;
 
-                    var buf = _buffers.GetOrAdd(pid, _ => new ProcessFrameBuffer(appName));
+                    var buf = _buffers.GetOrAdd(pid, _ => new ProcessFrameBuffer(pid, appName));
                     buf.AddSample(ms);
                 }
             }
             catch (OperationCanceledException) { break; }
-            catch { /* retry */ }
+            catch { }
             finally
             {
                 IsRunning = false;
@@ -129,34 +126,31 @@ public sealed class FpsTracker : IDisposable
         }
     }
 
-    public (int? Fps, int? Fps1Low, string? GameName) GetCurrentFps()
+    public (int? Fps, int? Fps1Low, string? GameName, int? ActivePid) GetCurrentFps()
     {
         var now = Environment.TickCount64;
 
-        // Clean stale processes (>3 seconds without frames)
+        // Clean processes idle for > 6 seconds (reduces loading-screen flicker)
         foreach (var kv in _buffers)
         {
-            if (now - kv.Value.LastTick > 3000)
+            if (now - kv.Value.LastTick > 6000)
                 _buffers.TryRemove(kv.Key, out _);
         }
 
-        if (_buffers.IsEmpty) return (null, null, null);
+        if (_buffers.IsEmpty) return (null, null, null, null);
 
-        // 1. Prefer the foreground window's PID
         int fgPid = GetForegroundPid();
-        if (fgPid > 0 && _buffers.TryGetValue(fgPid, out var fgBuf) && now - fgBuf.LastTick <= 2500)
+        if (fgPid > 0 && _buffers.TryGetValue(fgPid, out var fgBuf) && now - fgBuf.LastTick <= 5000)
         {
             return fgBuf.ComputeStats();
         }
 
-        // 2. Fallback: pick the most recently active non-browser process, or highest frame rate
         var best = _buffers.Values
-            .Where(b => now - b.LastTick <= 2500)
-            .OrderByDescending(b => !IsBrowser(b.AppName))
-            .ThenByDescending(b => b.RecentFrameCount)
+            .Where(b => now - b.LastTick <= 5000 && !IsBrowser(b.AppName))
+            .OrderByDescending(b => b.RecentFrameCount)
             .FirstOrDefault();
 
-        return best is not null ? best.ComputeStats() : (null, null, null);
+        return best is not null ? best.ComputeStats() : (null, null, null, null);
     }
 
     private static bool IsBrowser(string name) =>
@@ -206,11 +200,12 @@ public sealed class FpsTracker : IDisposable
     {
         private readonly object _lock = new();
         private readonly Queue<(long Tick, double Ms)> _samples = new();
+        public int Pid { get; }
         public string AppName { get; }
         public long LastTick { get; private set; }
         public int RecentFrameCount { get { lock (_lock) return _samples.Count; } }
 
-        public ProcessFrameBuffer(string appName) => AppName = appName;
+        public ProcessFrameBuffer(int pid, string appName) { Pid = pid; AppName = appName; }
 
         public void AddSample(double ms)
         {
@@ -224,7 +219,7 @@ public sealed class FpsTracker : IDisposable
             }
         }
 
-        public (int? Fps, int? Fps1Low, string? GameName) ComputeStats()
+        public (int? Fps, int? Fps1Low, string? GameName, int? ActivePid) ComputeStats()
         {
             var now = Environment.TickCount64;
             double[] values;
@@ -232,7 +227,7 @@ public sealed class FpsTracker : IDisposable
             {
                 while (_samples.Count > 0 && now - _samples.Peek().Tick > 1000)
                     _samples.Dequeue();
-                if (_samples.Count < 2) return (null, null, null);
+                if (_samples.Count < 2) return (null, null, Path.GetFileNameWithoutExtension(AppName), Pid);
                 values = _samples.Select(s => s.Ms).ToArray();
             }
 
@@ -243,8 +238,7 @@ public sealed class FpsTracker : IDisposable
             int idx99 = Math.Clamp((int)(values.Length * 0.99), 0, values.Length - 1);
             int fps1Low = (int)Math.Round(1000.0 / values[idx99]);
 
-            var cleanName = Path.GetFileNameWithoutExtension(AppName);
-            return (fps, fps1Low, cleanName);
+            return (fps, fps1Low, Path.GetFileNameWithoutExtension(AppName), Pid);
         }
     }
 }
