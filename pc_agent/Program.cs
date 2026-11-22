@@ -21,10 +21,12 @@ static class Program
         using var adb = new AdbBridge(baseDir, port);
         var sessions = new SessionAnalyzer(baseDir);
         var media = new MediaController();
-        using var server = new TelemetryServer(port, config, sessions, media, adb, baseDir);
+        using var obs = new ObsController(config);
+        using var server = new TelemetryServer(port, config, sessions, media, adb, obs, baseDir);
 
         fps.Start();
         adb.Start();
+        obs.Start();
         server.Start();
 
         var cts = new CancellationTokenSource();
@@ -42,8 +44,16 @@ static class Program
                     UsbConnected = adb.IsConnected,
                     DeviceSerial = adb.DeviceSerial,
                     PresentMonActive = fps.IsRunning,
+                    ObsConnected = obs.IsConnected,
+                    ObsStreaming = obs.IsStreaming,
+                    ObsRecording = obs.IsRecording,
+                    ObsStreamTime = obs.StreamTimecode,
+                    ObsCurrentScene = obs.CurrentScene,
+                    ObsScenes = obs.Scenes,
                     PcApkAvailable = apkExists,
                     PcApkStamp = apkStamp,
+                    WallpaperVersion = server.WallpaperVersion,
+                    StandbyMode = cfg.StandbyMode,
                     Theme = cfg.Theme,
                     FontScale = cfg.FontScale,
                     EnabledMetrics = cfg.EnabledMetrics,
@@ -86,7 +96,7 @@ static class Program
         using var tray = new NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = $"PC Monitor USB (порт {port})",
+            Text = $"PC Monitor USB v8 (порт {port})",
             Visible = true
         };
 
@@ -134,8 +144,8 @@ static class Program
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
         };
 
-        tray.ShowBalloonTip(2500, "PC Monitor USB v6 запущен",
-            "APK теперь обновляется в 1 клик по USB прямо с телефона или ПК.", ToolTipIcon.Info);
+        tray.ShowBalloonTip(2500, "PC Monitor USB v8 запущен",
+            "OBS WebSocket, сеть, кастомный фон и настольные часы готовы.", ToolTipIcon.Info);
 
         Application.Run();
         cts.Cancel();

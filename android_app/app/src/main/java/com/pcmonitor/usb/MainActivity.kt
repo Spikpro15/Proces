@@ -15,7 +15,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
 import android.view.GestureDetector
-import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
@@ -40,6 +40,9 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -52,6 +55,8 @@ class MainActivity : AppCompatActivity() {
     private val mediaUrl = "http://127.0.0.1:8765/api/media"
     private val mediaArtUrl = "http://127.0.0.1:8765/api/media/art"
     private val macroUrl = "http://127.0.0.1:8765/api/macro"
+    private val obsUrl = "http://127.0.0.1:8765/api/obs"
+    private val wallpaperUrl = "http://127.0.0.1:8765/api/wallpaper"
     private val updateApkUrl = "http://127.0.0.1:8765/api/update-apk"
 
     private val client = OkHttpClient.Builder()
@@ -66,8 +71,15 @@ class MainActivity : AppCompatActivity() {
     private var orientationMode = 0
     private var isMediaOpen = false
     private var isMacroOpen = false
+    private var isStandbyOpen = false
+    private var manualStandbyOverride = false
     private var lastArtVersion = -1
+    private var lastWallpaperVersion = -1
+    private var hasCustomWallpaper = false
     private var lastMediaPlaying: Boolean? = null
+    private var lastGameSeenMs = System.currentTimeMillis()
+    private var alertPulseToggle = false
+    private var pixelShiftStep = 0
 
     private var currentTheme = "midnight"
     private var currentFontScale = 1.0f
@@ -83,11 +95,18 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var gestureDetector: GestureDetector
     private lateinit var rootContainer: View
+    private lateinit var rootLayout: View
+    private lateinit var ivCustomBg: ImageView
+    private lateinit var customBgScrim: View
     private lateinit var tvStatus: TextView
     private lateinit var tvGameName: TextView
     private lateinit var btnUpdateApp: TextView
     private lateinit var metricsGrid: GridLayout
     private lateinit var tvMiniMedia: TextView
+    private lateinit var standbyOverlay: View
+    private lateinit var tvClockTime: TextView
+    private lateinit var tvClockDate: TextView
+    private lateinit var tvClockMedia: TextView
     private lateinit var mediaOverlay: View
     private lateinit var mediaBody: LinearLayout
     private lateinit var mediaRightCol: LinearLayout
@@ -102,11 +121,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvMediaDur: TextView
     private lateinit var btnPlayPause: ImageView
     private lateinit var macroOverlay: View
+    private lateinit var obsBar: View
+    private lateinit var btnObsStream: TextView
+    private lateinit var btnObsRecord: TextView
+    private lateinit var obsScenesRow: LinearLayout
     private lateinit var macroGrid: GridLayout
 
     private val allMetricIds = listOf(
         "fps", "cpu_load", "cpu_temp", "gpu_load", "gpu_temp", "ram_load",
-        "gpu_vram", "cpu_power", "gpu_power", "cpu_clock", "gpu_clock"
+        "gpu_vram", "net_speed", "cpu_power", "gpu_power", "cpu_clock", "gpu_clock"
     )
     private val metricLabels = mapOf(
         "fps" to "FPS в игре",
@@ -116,6 +139,7 @@ class MainActivity : AppCompatActivity() {
         "gpu_temp" to "Темп. GPU",
         "ram_load" to "Память RAM",
         "gpu_vram" to "Видеопамять",
+        "net_speed" to "Сеть ↑↓",
         "cpu_power" to "Питание CPU",
         "gpu_power" to "Питание GPU",
         "cpu_clock" to "Частота CPU",
@@ -135,6 +159,7 @@ class MainActivity : AppCompatActivity() {
         MacroItem("📸 Скриншот", "Win+PrintScreen"),
         MacroItem("🔇 Звук ПК", "vol_mute")
     )
+    private var lastObsScenesKey = ""
 
     private data class CardHolder(
         val cardRoot: View,
@@ -149,17 +174,46 @@ class MainActivity : AppCompatActivity() {
     private val cards = mutableMapOf<String, CardHolder>()
     private var lastPayload: JSONObject? = null
 
+    private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private val dateFmt = SimpleDateFormat("EEEE, d MMMM", Locale("ru"))
+
+    private val clockAndShiftRunnable = object : Runnable {
+        override fun run() {
+            if (isDestroyedFlag) return
+            val now = Date()
+            tvClockTime.text = timeFmt.format(now)
+            tvClockDate.text = dateFmt.format(now).replaceFirstChar { it.uppercase() }
+
+            // Subtle OLED burn-in pixel shift every 2 minutes
+            pixelShiftStep = (pixelShiftStep + 1) % 120
+            if (pixelShiftStep == 0) {
+                val offsets = listOf(-3f to -2f, 3f to -2f, 3f to 2f, -3f to 2f, 0f to 0f)
+                val (dx, dy) = offsets[(System.currentTimeMillis() / 120_000L % offsets.size).toInt()]
+                rootLayout.animate().translationX(dx).translationY(dy).setDuration(600).start()
+                standbyOverlay.animate().translationX(dx).translationY(dy).setDuration(600).start()
+            }
+            mainHandler.postDelayed(this, 1000L)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
 
         rootContainer = findViewById(R.id.rootContainer)
+        rootLayout = findViewById(R.id.rootLayout)
+        ivCustomBg = findViewById(R.id.ivCustomBg)
+        customBgScrim = findViewById(R.id.customBgScrim)
         tvStatus = findViewById(R.id.tvStatus)
         tvGameName = findViewById(R.id.tvGameName)
         btnUpdateApp = findViewById(R.id.btnUpdateApp)
         metricsGrid = findViewById(R.id.metricsGrid)
         tvMiniMedia = findViewById(R.id.tvMiniMedia)
+        standbyOverlay = findViewById(R.id.standbyOverlay)
+        tvClockTime = findViewById(R.id.tvClockTime)
+        tvClockDate = findViewById(R.id.tvClockDate)
+        tvClockMedia = findViewById(R.id.tvClockMedia)
         mediaOverlay = findViewById(R.id.mediaOverlay)
         mediaBody = findViewById(R.id.mediaBody)
         mediaRightCol = findViewById(R.id.mediaRightCol)
@@ -174,6 +228,10 @@ class MainActivity : AppCompatActivity() {
         tvMediaDur = findViewById(R.id.tvMediaDur)
         btnPlayPause = findViewById(R.id.btnPlayPause)
         macroOverlay = findViewById(R.id.macroOverlay)
+        obsBar = findViewById(R.id.obsBar)
+        btnObsStream = findViewById(R.id.btnObsStream)
+        btnObsRecord = findViewById(R.id.btnObsRecord)
+        obsScenesRow = findViewById(R.id.obsScenesRow)
         macroGrid = findViewById(R.id.macroGrid)
 
         ivMediaArt.clipToOutline = true
@@ -186,11 +244,28 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnSettings).setOnClickListener { openSettingsDialog() }
         findViewById<View>(R.id.btnRotate).setOnClickListener { cycleOrientation() }
         findViewById<View>(R.id.btnDim).setOnClickListener { toggleDim() }
+        findViewById<View>(R.id.btnClockMode).setOnClickListener {
+            manualStandbyOverride = true
+            setStandbyVisible(!isStandbyOpen)
+        }
+        standbyOverlay.setOnClickListener {
+            manualStandbyOverride = true
+            setStandbyVisible(false)
+        }
         findViewById<View>(R.id.btnMacros).setOnClickListener { showMacroOverlay(true) }
         findViewById<View>(R.id.btnCloseMacros).setOnClickListener { showMacroOverlay(false) }
         tvMiniMedia.setOnClickListener { showMediaOverlay(true) }
         findViewById<View>(R.id.btnCloseMedia).setOnClickListener { showMediaOverlay(false) }
         btnUpdateApp.setOnClickListener { triggerUsbSelfUpdate() }
+
+        btnObsStream.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            sendPost(obsUrl, JSONObject().put("action", "toggle_stream"))
+        }
+        btnObsRecord.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            sendPost(obsUrl, JSONObject().put("action", "toggle_record"))
+        }
 
         setupBouncyMediaBtn(findViewById(R.id.btnPrev), "prev")
         setupBouncyMediaBtn(btnPlayPause, "play_pause")
@@ -222,11 +297,64 @@ class MainActivity : AppCompatActivity() {
         applyTheme()
         applyMediaAccent(mediaAccentColor)
         applyImmersiveMode()
+        mainHandler.post(clockAndShiftRunnable)
         connectWebSocket()
     }
 
+    private fun setStandbyVisible(show: Boolean) {
+        if (show == isStandbyOpen) return
+        isStandbyOpen = show
+        if (show) {
+            standbyOverlay.alpha = 0f
+            standbyOverlay.visibility = View.VISIBLE
+            standbyOverlay.animate().alpha(1f).setDuration(260).start()
+        } else {
+            standbyOverlay.animate().alpha(0f).setDuration(200).withEndAction {
+                standbyOverlay.visibility = View.GONE
+            }.start()
+        }
+    }
+
+    private fun fetchCustomWallpaper() {
+        val req = Request.Builder().url(wallpaperUrl).build()
+        client.newCall(req).enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                mainHandler.post { clearCustomWallpaper() }
+            }
+            override fun onResponse(call: okhttp3.Call, response: Response) {
+                response.use { res ->
+                    if (res.code == 200) {
+                        val bytes = res.body?.bytes()
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            if (bmp != null) {
+                                mainHandler.post {
+                                    hasCustomWallpaper = true
+                                    ivCustomBg.setImageBitmap(bmp)
+                                    ivCustomBg.visibility = View.VISIBLE
+                                    customBgScrim.visibility = View.VISIBLE
+                                    applyTheme()
+                                }
+                                return
+                            }
+                        }
+                    }
+                    mainHandler.post { clearCustomWallpaper() }
+                }
+            }
+        })
+    }
+
+    private fun clearCustomWallpaper() {
+        hasCustomWallpaper = false
+        ivCustomBg.setImageBitmap(null)
+        ivCustomBg.visibility = View.GONE
+        customBgScrim.visibility = View.GONE
+        applyTheme()
+    }
+
     private fun triggerUsbSelfUpdate() {
-        btnUpdateApp.text = "⏳ Обновляю..."
+        btnUpdateApp.text = "⏳ ..."
         btnUpdateApp.isEnabled = false
         val req = Request.Builder()
             .url(updateApkUrl)
@@ -249,7 +377,7 @@ class MainActivity : AppCompatActivity() {
                     val ok = txt.contains("\"ok\":true")
                     Toast.makeText(
                         this@MainActivity,
-                        if (ok) "Обновление установлено!" else "Ошибка обновления (проверь APK рядом с EXE)",
+                        if (ok) "Обновление установлено!" else "Ошибка обновления APK",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -262,19 +390,16 @@ class MainActivity : AppCompatActivity() {
         mediaBody.orientation = if (isLandscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         val rightParams = mediaRightCol.layoutParams as LinearLayout.LayoutParams
         if (isLandscape) {
-            rightParams.width = 0
-            rightParams.height = LinearLayout.LayoutParams.WRAP_CONTENT
-            rightParams.weight = 1f
+            rightParams.width = 0; rightParams.height = LinearLayout.LayoutParams.WRAP_CONTENT; rightParams.weight = 1f
         } else {
-            rightParams.width = LinearLayout.LayoutParams.MATCH_PARENT
-            rightParams.height = LinearLayout.LayoutParams.WRAP_CONTENT
-            rightParams.weight = 0f
+            rightParams.width = LinearLayout.LayoutParams.MATCH_PARENT; rightParams.height = LinearLayout.LayoutParams.WRAP_CONTENT; rightParams.weight = 0f
         }
         mediaRightCol.layoutParams = rightParams
     }
 
     private fun setupBouncyMediaBtn(view: View, action: String) {
         view.setOnClickListener { v ->
+            v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
             v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(75).withEndAction {
                 v.animate().scaleX(1f).scaleY(1f).setDuration(110).start()
             }.start()
@@ -296,9 +421,7 @@ class MainActivity : AppCompatActivity() {
             mediaOverlay.translationY = h
             mediaOverlay.animate().translationY(0f).setDuration(240).start()
         } else {
-            mediaOverlay.animate().translationY(h).setDuration(200).withEndAction {
-                mediaOverlay.visibility = View.GONE
-            }.start()
+            mediaOverlay.animate().translationY(h).setDuration(200).withEndAction { mediaOverlay.visibility = View.GONE }.start()
         }
     }
 
@@ -311,9 +434,7 @@ class MainActivity : AppCompatActivity() {
             macroOverlay.translationX = w
             macroOverlay.animate().translationX(0f).setDuration(220).start()
         } else {
-            macroOverlay.animate().translationX(w).setDuration(200).withEndAction {
-                macroOverlay.visibility = View.GONE
-            }.start()
+            macroOverlay.animate().translationX(w).setDuration(200).withEndAction { macroOverlay.visibility = View.GONE }.start()
         }
     }
 
@@ -331,9 +452,7 @@ class MainActivity : AppCompatActivity() {
     private fun fetchAlbumArt() {
         val req = Request.Builder().url(mediaArtUrl).build()
         client.newCall(req).enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                mainHandler.post { clearAlbumArt() }
-            }
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) { mainHandler.post { clearAlbumArt() } }
             override fun onResponse(call: okhttp3.Call, response: Response) {
                 response.use { res ->
                     if (res.code == 200) {
@@ -371,10 +490,7 @@ class MainActivity : AppCompatActivity() {
         audioVisualizer.setAccentColor(color)
         mediaProgress.progressTintList = ColorStateList.valueOf(color)
         mediaProgress.progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#33FFFFFF"))
-        btnPlayPause.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(color)
-        }
+        btnPlayPause.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
     }
 
     private fun extractVibrantColor(bmp: Bitmap): Int {
@@ -384,15 +500,13 @@ class MainActivity : AppCompatActivity() {
         val hsv = FloatArray(3)
         for (y in 0 until 16) {
             for (x in 0 until 16) {
-                val c = small.getPixel(x, y)
-                Color.colorToHSV(c, hsv)
+                Color.colorToHSV(small.getPixel(x, y), hsv)
                 val sat = hsv[1]; val v = hsv[2]
                 if (v > 0.28f && sat > 0.25f) {
                     val score = sat * 1.4f + v * 0.6f
                     if (score > bestScore) {
                         bestScore = score
-                        hsv[2] = v.coerceIn(0.68f, 0.96f)
-                        hsv[1] = sat.coerceIn(0.50f, 0.92f)
+                        hsv[2] = v.coerceIn(0.68f, 0.96f); hsv[1] = sat.coerceIn(0.50f, 0.92f)
                         bestColor = Color.HSVToColor(hsv)
                     }
                 }
@@ -443,22 +557,26 @@ class MainActivity : AppCompatActivity() {
         return "%d:%02d".format(total / 60, total % 60)
     }
 
+    private fun cardFillColor(th: ThemeColors): Int =
+        if (hasCustomWallpaper) Color.argb(196, Color.red(th.card), Color.green(th.card), Color.blue(th.card)) else th.card
+
     private fun applyTheme() {
         val th = themes[currentTheme] ?: themes["midnight"]!!
         rootContainer.setBackgroundColor(th.bg)
         macroOverlay.setBackgroundColor(Color.argb(245, Color.red(th.bg), Color.green(th.bg), Color.blue(th.bg)))
+        val fill = cardFillColor(th)
         cards.values.forEach { holder ->
-            holder.cardRoot.background = makeCardDrawable(th.card, th.border)
+            holder.cardRoot.background = makeCardDrawable(fill, th.border)
             holder.tvValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34f * currentFontScale)
         }
         rebuildMacroGrid()
     }
 
-    private fun makeCardDrawable(fill: Int, stroke: Int): GradientDrawable =
+    private fun makeCardDrawable(fill: Int, stroke: Int, strokeW: Int = 2): GradientDrawable =
         GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             setColor(fill)
-            setStroke(2, stroke)
+            setStroke(strokeW, stroke)
             cornerRadius = 28f
         }
 
@@ -477,11 +595,7 @@ class MainActivity : AppCompatActivity() {
     private fun splitIconAndTitle(raw: String): Pair<String, String> {
         val trimmed = raw.trim()
         val sp = trimmed.indexOf(' ')
-        return if (sp in 1..4) {
-            trimmed.substring(0, sp) to trimmed.substring(sp + 1).trim()
-        } else {
-            "⚡" to trimmed
-        }
+        return if (sp in 1..4) trimmed.substring(0, sp) to trimmed.substring(sp + 1).trim() else "⚡" to trimmed
     }
 
     private fun rebuildMacroGrid() {
@@ -508,54 +622,89 @@ class MainActivity : AppCompatActivity() {
                     Color.argb(255, ((Color.red(th.card) * 4 + Color.red(accent)) / 5), ((Color.green(th.card) * 4 + Color.green(accent)) / 5), ((Color.blue(th.card) * 4 + Color.blue(accent)) / 5)),
                     th.card
                 )
-            ).apply {
-                cornerRadius = 38f
-                setStroke(2, subtleBorder)
-            }
+            ).apply { cornerRadius = 38f; setStroke(2, subtleBorder) }
             val flashBg = GradientDrawable().apply {
                 setColor(Color.argb(95, Color.red(accent), Color.green(accent), Color.blue(accent)))
-                cornerRadius = 38f
-                setStroke(3, accent)
+                cornerRadius = 38f; setStroke(3, accent)
             }
 
             tile.background = normalBg
-
             val tvIcon = tile.findViewById<TextView>(R.id.tvMacroIcon)
             val tvTitle = tile.findViewById<TextView>(R.id.tvMacroTitle)
             val tvKey = tile.findViewById<TextView>(R.id.tvMacroHotkey)
 
             tvIcon.text = icon
-            tvIcon.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(softBg)
-                setStroke(2, subtleBorder)
-            }
+            tvIcon.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(softBg); setStroke(2, subtleBorder) }
             tvTitle.text = title
             tvKey.text = m.hotkey
             tvKey.setTextColor(accent)
             tvKey.background = GradientDrawable().apply {
-                setColor(Color.parseColor("#22000000"))
-                cornerRadius = 18f
+                setColor(Color.parseColor("#22000000")); cornerRadius = 18f
                 setStroke(1, Color.argb(70, Color.red(accent), Color.green(accent), Color.blue(accent)))
             }
 
             tile.setOnClickListener { v ->
-                v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                 v.background = flashBg
                 v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80).withEndAction {
-                    v.animate().scaleX(1f).scaleY(1f).setDuration(120).withEndAction {
-                        v.background = normalBg
-                    }.start()
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(120).withEndAction { v.background = normalBg }.start()
                 }.start()
                 sendPost(macroUrl, JSONObject().put("hotkey", m.hotkey))
             }
 
             val params = GridLayout.LayoutParams(
-                GridLayout.spec(idx / cols, 1f),
-                GridLayout.spec(idx % cols, 1f)
+                GridLayout.spec(idx / cols, 1f), GridLayout.spec(idx % cols, 1f)
             ).apply { width = 0; height = 0; setMargins(10, 10, 10, 10) }
             tile.layoutParams = params
             macroGrid.addView(tile)
+        }
+    }
+
+    private fun updateObsBar(d: JSONObject) {
+        val connected = d.optBoolean("obsConnected", false)
+        obsBar.visibility = if (connected) View.VISIBLE else View.GONE
+        if (!connected) return
+
+        val streaming = d.optBoolean("obsStreaming", false)
+        val recording = d.optBoolean("obsRecording", false)
+        val timecode = if (d.isNull("obsStreamTime")) "" else d.optString("obsStreamTime", "")
+        val curScene = if (d.isNull("obsCurrentScene")) "" else d.optString("obsCurrentScene", "")
+
+        btnObsStream.text = if (streaming) "🔴 LIVE $timecode" else "○ OBS Стрим"
+        btnObsStream.setTextColor(if (streaming) Color.parseColor("#FF7B72") else Color.parseColor("#E6EDF3"))
+
+        btnObsRecord.text = if (recording) "🔴 Идёт запись" else "⏺ Запись"
+        btnObsRecord.setTextColor(if (recording) Color.parseColor("#FF7B72") else Color.parseColor("#E6EDF3"))
+
+        val scenesArr = d.optJSONArray("obsScenes") ?: return
+        val scenes = mutableListOf<String>()
+        for (i in 0 until scenesArr.length()) scenes.add(scenesArr.optString(i))
+        val key = "$curScene|${scenes.joinToString(",")}"
+        if (key == lastObsScenesKey) return
+        lastObsScenesKey = key
+
+        obsScenesRow.removeAllViews()
+        scenes.forEach { name ->
+            val active = name == curScene
+            val pill = TextView(this).apply {
+                text = name
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(if (active) Color.parseColor("#090C10") else Color.parseColor("#C9D1D9"))
+                setPadding(26, 12, 26, 12)
+                background = GradientDrawable().apply {
+                    cornerRadius = 32f
+                    setColor(if (active) Color.parseColor("#58A6FF") else Color.parseColor("#1B222C"))
+                    setStroke(1, Color.parseColor("#30363D"))
+                }
+                setOnClickListener { v ->
+                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    sendPost(obsUrl, JSONObject().put("action", "switch_scene").put("sceneName", name))
+                }
+            }
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.marginEnd = 12
+            pill.layoutParams = lp
+            obsScenesRow.addView(pill)
         }
     }
 
@@ -563,14 +712,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        rebuildGrid()
-        rebuildMacroGrid()
-        applyMediaOrientationLayout()
+        rebuildGrid(); rebuildMacroGrid(); applyMediaOrientationLayout()
         lastPayload?.let { updateUi(it) }
     }
 
     override fun onDestroy() {
         isDestroyedFlag = true
+        mainHandler.removeCallbacks(clockAndShiftRunnable)
         webSocket?.close(1000, "Activity destroyed")
         client.dispatcher.executorService.shutdown()
         super.onDestroy()
@@ -586,12 +734,9 @@ class MainActivity : AppCompatActivity() {
             }
         } else {
             window.decorView.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                 )
         }
     }
@@ -629,6 +774,7 @@ class MainActivity : AppCompatActivity() {
         cards.clear()
 
         val th = themes[currentTheme] ?: themes["midnight"]!!
+        val fill = cardFillColor(th)
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val count = enabledMetrics.size.coerceAtLeast(1)
         val cols = when {
@@ -645,8 +791,7 @@ class MainActivity : AppCompatActivity() {
         enabledMetrics.forEachIndexed { index, id ->
             val card = inflater.inflate(R.layout.item_metric_card, metricsGrid, false)
             val params = GridLayout.LayoutParams(
-                GridLayout.spec(index / cols, 1f),
-                GridLayout.spec(index % cols, 1f)
+                GridLayout.spec(index / cols, 1f), GridLayout.spec(index % cols, 1f)
             ).apply { width = 0; height = 0; setMargins(8, 8, 8, 8) }
             card.layoutParams = params
 
@@ -659,7 +804,7 @@ class MainActivity : AppCompatActivity() {
                 sparkline = card.findViewById(R.id.sparkline),
                 progress = card.findViewById(R.id.progressBar)
             )
-            holder.cardRoot.background = makeCardDrawable(th.card, th.border)
+            holder.cardRoot.background = makeCardDrawable(fill, th.border)
             holder.tvValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34f * currentFontScale)
             holder.tvLabel.text = metricLabels[id] ?: id
             cards[id] = holder
@@ -699,7 +844,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateUi(d: JSONObject) {
+        alertPulseToggle = !alertPulseToggle
         btnUpdateApp.visibility = if (d.optBoolean("pcApkAvailable", false)) View.VISIBLE else View.GONE
+
+        val wpVer = d.optInt("wallpaperVersion", 0)
+        if (wpVer != lastWallpaperVersion) {
+            lastWallpaperVersion = wpVer
+            if (wpVer > 0) fetchCustomWallpaper() else clearCustomWallpaper()
+        }
 
         val remoteArr = d.optJSONArray("enabledMetrics")
         if (remoteArr != null && remoteArr.length() > 0) {
@@ -709,9 +861,7 @@ class MainActivity : AppCompatActivity() {
                 if (id in allMetricIds) remoteList.add(id)
             }
             if (remoteList.isNotEmpty() && remoteList != enabledMetrics) {
-                enabledMetrics = remoteList
-                saveMetricsLocally()
-                rebuildGrid()
+                enabledMetrics = remoteList; saveMetricsLocally(); rebuildGrid()
             }
         }
 
@@ -730,15 +880,27 @@ class MainActivity : AppCompatActivity() {
                 val obj = remoteMacros.optJSONObject(i) ?: continue
                 parsed.add(MacroItem(obj.optString("label", "Кнопка"), obj.optString("hotkey", "")))
             }
-            if (parsed.isNotEmpty() && parsed != macros) {
-                macros = parsed
-                rebuildMacroGrid()
+            if (parsed.isNotEmpty() && parsed != macros) { macros = parsed; rebuildMacroGrid() }
+        }
+
+        updateObsBar(d)
+
+        val game = d.optString("activeGame", "")
+        val hasGame = game.isNotEmpty() && game != "null" && !d.isNull("fps")
+        tvGameName.text = if (game.isNotEmpty() && game != "null") "Игра: $game" else ""
+
+        // Auto-standby desk clock logic
+        if (hasGame) {
+            lastGameSeenMs = System.currentTimeMillis()
+            manualStandbyOverride = false
+            if (isStandbyOpen) setStandbyVisible(false)
+        } else if (d.optString("standbyMode", "off") == "auto" && !manualStandbyOverride && !isMediaOpen && !isMacroOpen) {
+            if (System.currentTimeMillis() - lastGameSeenMs > 30_000L && !isStandbyOpen) {
+                setStandbyVisible(true)
             }
         }
 
-        val game = d.optString("activeGame", "")
-        tvGameName.text = if (game.isNotEmpty() && game != "null") "Игра: $game" else ""
-
+        // Media + album art
         val mTitle = if (d.isNull("mediaTitle")) "" else d.optString("mediaTitle", "")
         val mArtist = if (d.isNull("mediaArtist")) "" else d.optString("mediaArtist", "")
         val mPlaying = d.optBoolean("mediaPlaying", false)
@@ -760,32 +922,29 @@ class MainActivity : AppCompatActivity() {
 
         if (mTitle.isNotEmpty()) {
             val icon = if (mPlaying) "▶" else "⏸"
-            tvMiniMedia.text = "⌃ $icon $mTitle" + if (mArtist.isNotEmpty()) " — $mArtist" else ""
+            val shortTrack = "$icon $mTitle" + if (mArtist.isNotEmpty()) " — $mArtist" else ""
+            tvMiniMedia.text = "⌃ $shortTrack"
+            tvClockMedia.text = shortTrack
             tvMediaStatus.text = if (mPlaying) "NOW PLAYING" else "PAUSED"
             tvMediaTitle.text = mTitle
             tvMediaArtist.text = mArtist
             btnPlayPause.setImageResource(if (mPlaying) R.drawable.ic_pause else R.drawable.ic_play)
             tvMediaPos.text = formatTime(posSec)
             tvMediaDur.text = formatTime(durSec)
-            if (posSec != null && durSec != null && durSec > 0) {
-                mediaProgress.progress = ((posSec / durSec) * 1000.0).roundToInt().coerceIn(0, 1000)
-            } else {
-                mediaProgress.progress = 0
-            }
+            mediaProgress.progress = if (posSec != null && durSec != null && durSec > 0) ((posSec / durSec) * 1000.0).roundToInt().coerceIn(0, 1000) else 0
         } else {
             tvMiniMedia.text = "⌃ Свайп вверх — плеер · ⇠ Свайп влево — кнопки"
+            tvClockMedia.text = "Нажми в любом месте — вернуться к датчикам"
             tvMediaStatus.text = "WINDOWS MEDIA"
             tvMediaTitle.text = "Ничего не играет"
             tvMediaArtist.text = ""
             btnPlayPause.setImageResource(R.drawable.ic_play)
-            tvMediaPos.text = "0:00"
-            tvMediaDur.text = "0:00"
-            mediaProgress.progress = 0
-            audioVisualizer.setPlaying(false)
-            clearAlbumArt()
+            tvMediaPos.text = "0:00"; tvMediaDur.text = "0:00"; mediaProgress.progress = 0
+            audioVisualizer.setPlaying(false); clearAlbumArt()
         }
 
-        val accentColor = (themes[currentTheme] ?: themes["midnight"]!!).accent
+        val th = themes[currentTheme] ?: themes["midnight"]!!
+        val accentColor = th.accent
 
         cards["fps"]?.let { c ->
             val fps = if (d.isNull("fps")) null else d.optInt("fps")
@@ -793,23 +952,19 @@ class MainActivity : AppCompatActivity() {
             if (fps != null) {
                 c.tvValue.text = fps.toString(); c.tvUnit.text = "FPS"
                 c.tvSub.text = if (low1 != null) "1% low: $low1 FPS" else ""
-                val col = when {
-                    fps >= 60 -> Color.parseColor("#3FB950")
-                    fps >= 30 -> Color.parseColor("#D29922")
-                    else -> Color.parseColor("#F85149")
-                }
-                setCardData(c, col, (fps * 100 / 165).coerceIn(0, 100), fps / 165f)
+                val col = when { fps >= 60 -> Color.parseColor("#3FB950"); fps >= 30 -> Color.parseColor("#D29922"); else -> Color.parseColor("#F85149") }
+                setCardData(c, col, (fps * 100 / 165).coerceIn(0, 100), fps / 165f, false)
             } else {
                 c.tvValue.text = "--"; c.tvUnit.text = "FPS"
                 c.tvSub.text = if (d.optBoolean("presentMonActive", false)) "Нет активной игры" else "PresentMon не запущен"
-                setCardData(c, Color.parseColor("#8B949E"), 0, null)
+                setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
             }
         }
 
         updatePercentCard("cpu_load", d, "cpuLoad", d.optString("cpuName", ""), accentColor)
-        updateTempCard("cpu_temp", d, "cpuTemp", "Tctl / Package")
+        updateTempCard("cpu_temp", d, "cpuTemp", "Tctl / Package", 86.0)
         updatePercentCard("gpu_load", d, "gpuLoad", d.optString("gpuName", ""), accentColor)
-        updateTempCard("gpu_temp", d, "gpuTemp", "GPU Core")
+        updateTempCard("gpu_temp", d, "gpuTemp", "GPU Core", 84.0)
 
         cards["ram_load"]?.let { c ->
             val pct = optNullableDouble(d, "ramLoad")
@@ -818,10 +973,10 @@ class MainActivity : AppCompatActivity() {
             if (pct != null) {
                 c.tvValue.text = pct.roundToInt().toString(); c.tvUnit.text = "%"
                 c.tvSub.text = if (used != null && total != null) "$used / $total ГБ" else ""
-                setCardData(c, loadColor(pct, accentColor), pct.roundToInt().coerceIn(0, 100), (pct / 100.0).toFloat())
+                setCardData(c, loadColor(pct, accentColor), pct.roundToInt().coerceIn(0, 100), (pct / 100.0).toFloat(), pct >= 94.0)
             } else {
                 c.tvValue.text = "--"; c.tvUnit.text = "%"; c.tvSub.text = ""
-                setCardData(c, Color.parseColor("#8B949E"), 0, null)
+                setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
             }
         }
 
@@ -832,10 +987,24 @@ class MainActivity : AppCompatActivity() {
                 c.tvValue.text = String.format("%.1f", used); c.tvUnit.text = "ГБ"
                 val pct = if (total != null && total > 0) ((used / total) * 100).roundToInt() else 0
                 c.tvSub.text = if (total != null) "из ${String.format("%.1f", total)} ГБ ($pct%)" else ""
-                setCardData(c, loadColor(pct.toDouble(), accentColor), pct.coerceIn(0, 100), pct / 100f)
+                setCardData(c, loadColor(pct.toDouble(), accentColor), pct.coerceIn(0, 100), pct / 100f, pct >= 95)
             } else {
                 c.tvValue.text = "--"; c.tvUnit.text = "ГБ"; c.tvSub.text = ""
-                setCardData(c, Color.parseColor("#8B949E"), 0, null)
+                setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
+            }
+        }
+
+        cards["net_speed"]?.let { c ->
+            val up = optNullableDouble(d, "netUpMbps")
+            val down = optNullableDouble(d, "netDownMbps")
+            if (up != null) {
+                c.tvValue.text = "↑${String.format("%.1f", up)}"; c.tvUnit.text = "Мбит"
+                c.tvSub.text = if (down != null) "↓ ${String.format("%.1f", down)} Мбит/с" else ""
+                val col = Color.parseColor("#2DD4BF")
+                setCardData(c, col, ((up / 50.0) * 100).roundToInt().coerceIn(0, 100), (up / 50.0).toFloat(), false)
+            } else {
+                c.tvValue.text = "--"; c.tvUnit.text = "Мбит"; c.tvSub.text = ""
+                setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
             }
         }
 
@@ -850,27 +1019,23 @@ class MainActivity : AppCompatActivity() {
         val v = optNullableDouble(d, key)
         if (v != null) {
             c.tvValue.text = v.roundToInt().toString(); c.tvUnit.text = "%"; c.tvSub.text = sub
-            setCardData(c, loadColor(v, accent), v.roundToInt().coerceIn(0, 100), (v / 100.0).toFloat())
+            setCardData(c, loadColor(v, accent), v.roundToInt().coerceIn(0, 100), (v / 100.0).toFloat(), false)
         } else {
             c.tvValue.text = "--"; c.tvUnit.text = "%"; c.tvSub.text = ""
-            setCardData(c, Color.parseColor("#8B949E"), 0, null)
+            setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
         }
     }
 
-    private fun updateTempCard(id: String, d: JSONObject, key: String, sub: String) {
+    private fun updateTempCard(id: String, d: JSONObject, key: String, sub: String, alertThresh: Double) {
         val c = cards[id] ?: return
         val v = optNullableDouble(d, key)
         if (v != null) {
             c.tvValue.text = v.roundToInt().toString(); c.tvUnit.text = "°C"; c.tvSub.text = sub
-            val col = when {
-                v >= 85.0 -> Color.parseColor("#F85149")
-                v >= 72.0 -> Color.parseColor("#D29922")
-                else -> Color.parseColor("#3FB950")
-            }
-            setCardData(c, col, v.roundToInt().coerceIn(0, 100), (v / 100.0).toFloat())
+            val col = when { v >= alertThresh -> Color.parseColor("#F85149"); v >= 72.0 -> Color.parseColor("#D29922"); else -> Color.parseColor("#3FB950") }
+            setCardData(c, col, v.roundToInt().coerceIn(0, 100), (v / 100.0).toFloat(), v >= alertThresh)
         } else {
             c.tvValue.text = "--"; c.tvUnit.text = "°C"; c.tvSub.text = ""
-            setCardData(c, Color.parseColor("#8B949E"), 0, null)
+            setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
         }
     }
 
@@ -880,10 +1045,10 @@ class MainActivity : AppCompatActivity() {
         if (v != null) {
             c.tvValue.text = v.roundToInt().toString(); c.tvUnit.text = unit; c.tvSub.text = ""
             val norm = (v / maxVal).toFloat()
-            setCardData(c, color, (norm * 100).roundToInt().coerceIn(0, 100), norm)
+            setCardData(c, color, (norm * 100).roundToInt().coerceIn(0, 100), norm, false)
         } else {
             c.tvValue.text = "--"; c.tvUnit.text = unit; c.tvSub.text = ""
-            setCardData(c, Color.parseColor("#8B949E"), 0, null)
+            setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
         }
     }
 
@@ -893,11 +1058,19 @@ class MainActivity : AppCompatActivity() {
         else -> accent
     }
 
-    private fun setCardData(c: CardHolder, color: Int, progress: Int, sparkNorm: Float?) {
+    private fun setCardData(c: CardHolder, color: Int, progress: Int, sparkNorm: Float?, criticalAlert: Boolean) {
         c.tvValue.setTextColor(color)
         c.progress.progress = progress
         c.progress.progressTintList = ColorStateList.valueOf(color)
         if (sparkNorm != null) c.sparkline.addPoint(sparkNorm, color)
+
+        val th = themes[currentTheme] ?: themes["midnight"]!!
+        val fill = cardFillColor(th)
+        if (criticalAlert && alertPulseToggle) {
+            c.cardRoot.background = makeCardDrawable(Color.argb(215, 70, 16, 18), Color.parseColor("#F85149"), 4)
+        } else {
+            c.cardRoot.background = makeCardDrawable(fill, th.border, 2)
+        }
     }
 
     private fun optNullableDouble(d: JSONObject, key: String): Double? {
@@ -917,9 +1090,7 @@ class MainActivity : AppCompatActivity() {
                 val selected = allMetricIds.filterIndexed { idx, _ -> checked[idx] }
                 if (selected.isNotEmpty()) {
                     enabledMetrics = selected.toMutableList()
-                    saveMetricsLocally()
-                    rebuildGrid()
-                    lastPayload?.let { updateUi(it) }
+                    saveMetricsLocally(); rebuildGrid(); lastPayload?.let { updateUi(it) }
                     sendPost(configUrl, JSONObject().put("enabledMetrics", JSONArray(selected)))
                 }
             }

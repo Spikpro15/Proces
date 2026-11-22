@@ -5,6 +5,21 @@
     android:layout_height="match_parent"
     android:background="#090C10">
 
+    <!-- Optional custom glassmorphism wallpaper -->
+    <ImageView
+        android:id="@+id/ivCustomBg"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
+
+    <View
+        android:id="@+id/customBgScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#88090C10"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/rootLayout"
         android:layout_width="match_parent"
@@ -50,72 +65,86 @@
                 android:id="@+id/btnUpdateApp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="6dp"
+                android:layout_marginEnd="5dp"
                 android:background="@drawable/status_pill_bg"
-                android:paddingLeft="10dp"
+                android:paddingLeft="9dp"
                 android:paddingTop="5dp"
-                android:paddingRight="10dp"
+                android:paddingRight="9dp"
                 android:paddingBottom="5dp"
                 android:text="⬇ Обновить"
                 android:textColor="#3FB950"
-                android:textSize="12sp"
+                android:textSize="11sp"
                 android:textStyle="bold"
                 android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnClockMode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:background="@drawable/status_pill_bg"
+                android:paddingLeft="8dp"
+                android:paddingTop="5dp"
+                android:paddingRight="8dp"
+                android:paddingBottom="5dp"
+                android:text="🕒"
+                android:textColor="#E6EDF3"
+                android:textSize="12sp" />
 
             <TextView
                 android:id="@+id/btnMacros"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="6dp"
+                android:layout_marginEnd="5dp"
                 android:background="@drawable/status_pill_bg"
-                android:paddingLeft="9dp"
+                android:paddingLeft="8dp"
                 android:paddingTop="5dp"
-                android:paddingRight="9dp"
+                android:paddingRight="8dp"
                 android:paddingBottom="5dp"
                 android:text="⚡"
                 android:textColor="#E6EDF3"
-                android:textSize="13sp" />
+                android:textSize="12sp" />
 
             <TextView
                 android:id="@+id/btnDim"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="6dp"
+                android:layout_marginEnd="5dp"
                 android:background="@drawable/status_pill_bg"
-                android:paddingLeft="9dp"
+                android:paddingLeft="8dp"
                 android:paddingTop="5dp"
-                android:paddingRight="9dp"
+                android:paddingRight="8dp"
                 android:paddingBottom="5dp"
                 android:text="☀"
                 android:textColor="#C9D1D9"
-                android:textSize="13sp" />
+                android:textSize="12sp" />
 
             <TextView
                 android:id="@+id/btnRotate"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="6dp"
+                android:layout_marginEnd="5dp"
                 android:background="@drawable/status_pill_bg"
-                android:paddingLeft="9dp"
+                android:paddingLeft="8dp"
                 android:paddingTop="5dp"
-                android:paddingRight="9dp"
+                android:paddingRight="8dp"
                 android:paddingBottom="5dp"
                 android:text="⟳"
                 android:textColor="#C9D1D9"
-                android:textSize="13sp" />
+                android:textSize="12sp" />
 
             <TextView
                 android:id="@+id/btnSettings"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:background="@drawable/status_pill_bg"
-                android:paddingLeft="9dp"
+                android:paddingLeft="8dp"
                 android:paddingTop="5dp"
-                android:paddingRight="9dp"
+                android:paddingRight="8dp"
                 android:paddingBottom="5dp"
                 android:text="⚙"
                 android:textColor="#E6EDF3"
-                android:textSize="13sp" />
+                android:textSize="12sp" />
         </LinearLayout>
 
         <GridLayout
@@ -137,6 +166,53 @@
             android:text="⌃ Свайп вверх — плеер · ⇠ Свайп влево — кнопки"
             android:textColor="#6E7681"
             android:textSize="11sp" />
+    </LinearLayout>
+
+    <!-- STANDBY DESK CLOCK OVERLAY -->
+    <LinearLayout
+        android:id="@+id/standbyOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#E605070A"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="24dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvClockTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:text="12:00"
+            android:textColor="#FFFFFF"
+            android:textSize="76sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvClockDate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text=""
+            android:textColor="#8B949E"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/tvClockMedia"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/glass_pill"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:paddingLeft="16dp"
+            android:paddingTop="7dp"
+            android:paddingRight="16dp"
+            android:paddingBottom="7dp"
+            android:text="Нажми в любом месте — вернуться к датчикам"
+            android:textColor="#C9D1D9"
+            android:textSize="13sp" />
     </LinearLayout>
 
     <!-- CLEAN RESPONSIVE NEXT-GEN MEDIA PLAYER -->
@@ -177,7 +253,6 @@
                 android:layout_marginBottom="10dp"
                 android:background="@drawable/glass_pill" />
 
-            <!-- Adaptive content container: horizontal in landscape, vertical in portrait (toggled in Kotlin) -->
             <LinearLayout
                 android:id="@+id/mediaBody"
                 android:layout_width="match_parent"
@@ -290,7 +365,6 @@
                             android:textSize="11sp" />
                     </LinearLayout>
 
-                    <!-- Playback buttons centered cleanly -->
                     <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -326,7 +400,6 @@
                             android:src="@drawable/ic_next" />
                     </LinearLayout>
 
-                    <!-- Volume pill cleanly on its own row so nothing ever overflows -->
                     <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="38dp"
@@ -365,7 +438,7 @@
         </LinearLayout>
     </FrameLayout>
 
-    <!-- Swipe-Left Stream Deck Macro Panel -->
+    <!-- Swipe-Left Modern Stream Deck + Live OBS Panel -->
     <LinearLayout
         android:id="@+id/macroOverlay"
         android:layout_width="match_parent"
@@ -380,15 +453,15 @@
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingBottom="8dp">
+            android:paddingBottom="6dp">
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="⚡ Быстрые кнопки ПК / OBS"
+                android:text="⚡ STREAM DECK"
                 android:textColor="#E6EDF3"
-                android:textSize="15sp"
+                android:textSize="14sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -396,14 +469,68 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:background="@drawable/status_pill_bg"
-                android:paddingLeft="14dp"
+                android:paddingLeft="12dp"
                 android:paddingTop="5dp"
-                android:paddingRight="14dp"
+                android:paddingRight="12dp"
                 android:paddingBottom="5dp"
-                android:text="✕ Закрыть (свайп вправо)"
+                android:text="✕ Свайп вправо"
                 android:textColor="#8B949E"
                 android:textSize="12sp" />
         </LinearLayout>
+
+        <!-- Live OBS Status & Scene Switcher Bar (shown automatically when OBS WebSocket connects) -->
+        <HorizontalScrollView
+            android:id="@+id/obsBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/obsRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/btnObsStream"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/status_pill_bg"
+                    android:paddingLeft="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingRight="12dp"
+                    android:paddingBottom="6dp"
+                    android:text="● OBS Стрим"
+                    android:textColor="#E6EDF3"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnObsRecord"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="10dp"
+                    android:background="@drawable/status_pill_bg"
+                    android:paddingLeft="12dp"
+                    android:paddingTop="6dp"
+                    android:paddingRight="12dp"
+                    android:paddingBottom="6dp"
+                    android:text="⏺ Запись"
+                    android:textColor="#E6EDF3"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/obsScenesRow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal" />
+            </LinearLayout>
+        </HorizontalScrollView>
 
         <GridLayout
             android:id="@+id/macroGrid"

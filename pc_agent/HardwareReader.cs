@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 using LibreHardwareMonitor.Hardware;
 
@@ -9,6 +10,7 @@ public sealed class HardwareReader : IDisposable
 {
     private readonly Computer? _computer;
     private ulong _prevIdle, _prevKernel, _prevUser;
+    private long _prevNetSent, _prevNetRecv, _prevNetTick;
 
     public HardwareReader()
     {
@@ -26,10 +28,7 @@ public sealed class HardwareReader : IDisposable
             };
             _computer.Open();
         }
-        catch
-        {
-            _computer = null;
-        }
+        catch { _computer = null; }
     }
 
     public void ReadInto(TelemetryPayload payload)
@@ -42,9 +41,7 @@ public sealed class HardwareReader : IDisposable
                 {
                     hw.Update();
                     foreach (var sub in hw.SubHardware)
-                    {
                         try { sub.Update(); } catch { }
-                    }
 
                     switch (hw.HardwareType)
                     {
@@ -70,14 +67,40 @@ public sealed class HardwareReader : IDisposable
             }
         }
 
-        if (payload.CpuLoad is null)
-            payload.CpuLoad = ReadCpuLoadWin32();
+        if (payload.CpuLoad is null) payload.CpuLoad = ReadCpuLoadWin32();
+        if (payload.RamLoad is null) ReadRamWin32(payload);
+        if (payload.GpuLoad is null || payload.GpuTemp is null) ReadNvidiaSmiFallback(payload);
+        ReadNetworkSpeed(payload);
+    }
 
-        if (payload.RamLoad is null)
-            ReadRamWin32(payload);
+    private void ReadNetworkSpeed(TelemetryPayload payload)
+    {
+        try
+        {
+            long sent = 0, recv = 0;
+            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (ni.OperationalStatus != OperationalStatus.Up) continue;
+                if (ni.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) continue;
+                var stats = ni.GetIPv4Statistics();
+                sent += stats.BytesSent;
+                recv += stats.BytesReceived;
+            }
 
-        if (payload.GpuLoad is null || payload.GpuTemp is null)
-            ReadNvidiaSmiFallback(payload);
+            var now = Environment.TickCount64;
+            if (_prevNetTick > 0 && now > _prevNetTick)
+            {
+                double dtSec = (now - _prevNetTick) / 1000.0;
+                double upMbps = Math.Max(0, (sent - _prevNetSent) * 8.0 / (dtSec * 1_000_000.0));
+                double downMbps = Math.Max(0, (recv - _prevNetRecv) * 8.0 / (dtSec * 1_000_000.0));
+                if (double.IsFinite(upMbps)) payload.NetUpMbps = Math.Round(upMbps, 1);
+                if (double.IsFinite(downMbps)) payload.NetDownMbps = Math.Round(downMbps, 1);
+            }
+            _prevNetSent = sent;
+            _prevNetRecv = recv;
+            _prevNetTick = now;
+        }
+        catch { }
     }
 
     private static void ReadCpu(IHardware hw, TelemetryPayload payload)
@@ -94,13 +117,9 @@ public sealed class HardwareReader : IDisposable
             else if (s.SensorType == SensorType.Temperature)
             {
                 if (s.Name.Contains("Tctl", StringComparison.OrdinalIgnoreCase) ||
-                    s.Name.Contains("Tdie", StringComparison.OrdinalIgnoreCase))
-                    tctlTemp = val;
-                else if (s.Name.Contains("Package", StringComparison.OrdinalIgnoreCase))
-                    packageTemp = val;
-
-                if (val > 0 && (maxTemp is null || val > maxTemp))
-                    maxTemp = val;
+                    s.Name.Contains("Tdie", StringComparison.OrdinalIgnoreCase)) tctlTemp = val;
+                else if (s.Name.Contains("Package", StringComparison.OrdinalIgnoreCase)) packageTemp = val;
+                if (val > 0 && (maxTemp is null || val > maxTemp)) maxTemp = val;
             }
             else if (s.SensorType == SensorType.Power && s.Name.Contains("Package", StringComparison.OrdinalIgnoreCase))
                 payload.CpuPower = Math.Round(val, 1);
@@ -171,9 +190,7 @@ public sealed class HardwareReader : IDisposable
             {
                 FileName = "nvidia-smi",
                 Arguments = "--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,clocks.gr --format=csv,noheader,nounits",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                CreateNoWindow = true
+                UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true
             };
             using var proc = Process.Start(psi);
             if (proc is null) return;
@@ -183,7 +200,6 @@ public sealed class HardwareReader : IDisposable
 
             var parts = line.Split(',');
             if (parts.Length < 5) return;
-
             if (string.IsNullOrEmpty(payload.GpuName)) payload.GpuName = parts[0].Trim();
             if (payload.GpuLoad is null && TryD(parts[1], out var load)) payload.GpuLoad = Math.Round(load, 1);
             if (payload.GpuTemp is null && TryD(parts[2], out var temp)) payload.GpuTemp = Math.Round(temp, 1);
@@ -202,11 +218,7 @@ public sealed class HardwareReader : IDisposable
     {
         if (!GetSystemTimes(out var idle, out var kernel, out var user)) return null;
         ulong i = ToU64(idle), k = ToU64(kernel), u = ToU64(user);
-        if (_prevKernel == 0 && _prevUser == 0)
-        {
-            _prevIdle = i; _prevKernel = k; _prevUser = u;
-            return null;
-        }
+        if (_prevKernel == 0 && _prevUser == 0) { _prevIdle = i; _prevKernel = k; _prevUser = u; return null; }
         ulong di = i - _prevIdle, dk = k - _prevKernel, du = u - _prevUser;
         _prevIdle = i; _prevKernel = k; _prevUser = u;
         ulong total = dk + du;
@@ -228,25 +240,15 @@ public sealed class HardwareReader : IDisposable
 
     private static ulong ToU64(FILETIME ft) => ((ulong)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct FILETIME { public uint dwLowDateTime; public uint dwHighDateTime; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MEMORYSTATUSEX
+    [StructLayout(LayoutKind.Sequential)] private struct FILETIME { public uint dwLowDateTime; public uint dwHighDateTime; }
+    [StructLayout(LayoutKind.Sequential)] private struct MEMORYSTATUSEX
     {
-        public uint dwLength;
-        public uint dwMemoryLoad;
+        public uint dwLength, dwMemoryLoad;
         public ulong ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile, ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual;
     }
 
-    [DllImport("kernel32.dll")]
-    private static extern bool GetSystemTimes(out FILETIME idle, out FILETIME kernel, out FILETIME user);
+    [DllImport("kernel32.dll")] private static extern bool GetSystemTimes(out FILETIME idle, out FILETIME kernel, out FILETIME user);
+    [DllImport("kernel32.dll")] private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
 
-    [DllImport("kernel32.dll")]
-    private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
-
-    public void Dispose()
-    {
-        try { _computer?.Close(); } catch { }
-    }
+    public void Dispose() { try { _computer?.Close(); } catch { } }
 }

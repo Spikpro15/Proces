@@ -13,18 +13,26 @@ public sealed class TelemetryServer : IDisposable
     private readonly SessionAnalyzer _sessions;
     private readonly MediaController _media;
     private readonly AdbBridge _adb;
+    private readonly ObsController _obs;
     private readonly string _apkPath;
+    private readonly string _wallpaperPath;
     private readonly ConcurrentDictionary<Guid, WebSocket> _sockets = new();
     private readonly CancellationTokenSource _cts = new();
     private string _latestJson = "{}";
+    private int _wallpaperVersion;
 
-    public TelemetryServer(int port, ConfigManager config, SessionAnalyzer sessions, MediaController media, AdbBridge adb, string baseDir)
+    public int WallpaperVersion => File.Exists(_wallpaperPath) ? Math.Max(1, _wallpaperVersion) : 0;
+
+    public TelemetryServer(int port, ConfigManager config, SessionAnalyzer sessions, MediaController media, AdbBridge adb, ObsController obs, string baseDir)
     {
         _config = config;
         _sessions = sessions;
         _media = media;
         _adb = adb;
+        _obs = obs;
         _apkPath = Path.Combine(baseDir, "PCMonitor-Android.apk");
+        _wallpaperPath = Path.Combine(baseDir, "wallpaper.img");
+        if (File.Exists(_wallpaperPath)) _wallpaperVersion = 1;
         _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
     }
 
@@ -43,20 +51,9 @@ public sealed class TelemetryServer : IDisposable
         foreach (var kv in _sockets)
         {
             var ws = kv.Value;
-            if (ws.State != WebSocketState.Open)
-            {
-                _sockets.TryRemove(kv.Key, out _);
-                continue;
-            }
-            try
-            {
-                await ws.SendAsync(seg, WebSocketMessageType.Text, true, _cts.Token);
-            }
-            catch
-            {
-                _sockets.TryRemove(kv.Key, out _);
-                try { ws.Dispose(); } catch { }
-            }
+            if (ws.State != WebSocketState.Open) { _sockets.TryRemove(kv.Key, out _); continue; }
+            try { await ws.SendAsync(seg, WebSocketMessageType.Text, true, _cts.Token); }
+            catch { _sockets.TryRemove(kv.Key, out _); try { ws.Dispose(); } catch { } }
         }
     }
 
@@ -80,33 +77,72 @@ public sealed class TelemetryServer : IDisposable
         var res = ctx.Response;
         res.Headers.Add("Access-Control-Allow-Origin", "*");
         res.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
-        res.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.Headers.Add("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
 
-        if (req.HttpMethod == "OPTIONS")
-        {
-            res.StatusCode = 204;
-            res.Close();
-            return;
-        }
+        if (req.HttpMethod == "OPTIONS") { res.StatusCode = 204; res.Close(); return; }
 
         var path = req.Url?.AbsolutePath ?? "/";
 
-        if (path == "/ws" && req.IsWebSocketRequest)
-        {
-            await HandleWebSocketAsync(ctx, ct);
-            return;
-        }
-
-        if (path == "/api/metrics" && req.HttpMethod == "GET")
-        {
-            await WriteJsonAsync(res, _latestJson);
-            return;
-        }
+        if (path == "/ws" && req.IsWebSocketRequest) { await HandleWebSocketAsync(ctx, ct); return; }
+        if (path == "/api/metrics" && req.HttpMethod == "GET") { await WriteJsonAsync(res, _latestJson); return; }
 
         if (path == "/api/update-apk" && req.HttpMethod == "POST")
         {
             var (ok, msg) = await _adb.InstallApkAsync(_apkPath);
             await WriteJsonAsync(res, JsonSerializer.Serialize(new { ok, message = msg }));
+            return;
+        }
+
+        if (path == "/api/wallpaper" && req.HttpMethod == "GET")
+        {
+            if (File.Exists(_wallpaperPath))
+            {
+                res.ContentType = "image/jpeg";
+                res.Headers.Add("Cache-Control", "no-store");
+                var bytes = await File.ReadAllBytesAsync(_wallpaperPath, ct);
+                await res.OutputStream.WriteAsync(bytes, ct);
+                res.Close();
+            }
+            else { res.StatusCode = 204; res.Close(); }
+            return;
+        }
+
+        if (path == "/api/wallpaper" && req.HttpMethod == "POST")
+        {
+            using var ms = new MemoryStream();
+            await req.InputStream.CopyToAsync(ms, ct);
+            var arr = ms.ToArray();
+            if (arr.Length > 100 && arr.Length < 10_000_000)
+            {
+                await File.WriteAllBytesAsync(_wallpaperPath, arr, ct);
+                _wallpaperVersion++;
+                await WriteJsonAsync(res, "{\"ok\":true}");
+            }
+            else { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
+            return;
+        }
+
+        if (path == "/api/wallpaper" && req.HttpMethod == "DELETE")
+        {
+            try { if (File.Exists(_wallpaperPath)) File.Delete(_wallpaperPath); } catch { }
+            _wallpaperVersion++;
+            await WriteJsonAsync(res, "{\"ok\":true}");
+            return;
+        }
+
+        if (path == "/api/obs" && req.HttpMethod == "POST")
+        {
+            using var reader = new StreamReader(req.InputStream, Encoding.UTF8);
+            var body = await reader.ReadToEndAsync(ct);
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var action = doc.RootElement.TryGetProperty("action", out var a) ? a.GetString() ?? "" : "";
+                var scene = doc.RootElement.TryGetProperty("sceneName", out var s) ? s.GetString() : null;
+                var ok = await _obs.ExecuteAsync(action, scene);
+                await WriteJsonAsync(res, ok ? "{\"ok\":true}" : "{\"ok\":false}");
+            }
+            catch { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
             return;
         }
 
@@ -120,11 +156,7 @@ public sealed class TelemetryServer : IDisposable
                 await res.OutputStream.WriteAsync(art, ct);
                 res.Close();
             }
-            else
-            {
-                res.StatusCode = 204;
-                res.Close();
-            }
+            else { res.StatusCode = 204; res.Close(); }
             return;
         }
 
@@ -139,11 +171,7 @@ public sealed class TelemetryServer : IDisposable
                 var ok = await _media.ExecuteCommandAsync(action);
                 await WriteJsonAsync(res, ok ? "{\"ok\":true}" : "{\"ok\":false}");
             }
-            catch
-            {
-                res.StatusCode = 400;
-                await WriteJsonAsync(res, "{\"ok\":false}");
-            }
+            catch { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
             return;
         }
 
@@ -158,11 +186,7 @@ public sealed class TelemetryServer : IDisposable
                 var ok = MacroController.Trigger(hotkey);
                 await WriteJsonAsync(res, ok ? "{\"ok\":true}" : "{\"ok\":false}");
             }
-            catch
-            {
-                res.StatusCode = 400;
-                await WriteJsonAsync(res, "{\"ok\":false}");
-            }
+            catch { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
             return;
         }
 
@@ -183,21 +207,13 @@ public sealed class TelemetryServer : IDisposable
                 bool ok = AutoStartManager.SetEnabled(enable);
                 await WriteJsonAsync(res, JsonSerializer.Serialize(new { ok, enabled = AutoStartManager.IsEnabled() }));
             }
-            catch
-            {
-                res.StatusCode = 400;
-                await WriteJsonAsync(res, "{\"ok\":false}");
-            }
+            catch { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
             return;
         }
 
         if (path == "/api/session" && req.HttpMethod == "GET")
         {
-            await WriteJsonAsync(res, JsonSerializer.Serialize(new
-            {
-                session = _sessions.GetStatus(),
-                reports = _sessions.ListReports()
-            }));
+            await WriteJsonAsync(res, JsonSerializer.Serialize(new { session = _sessions.GetStatus(), reports = _sessions.ListReports() }));
             return;
         }
 
@@ -220,9 +236,7 @@ public sealed class TelemetryServer : IDisposable
                 res.Close();
                 return;
             }
-            res.StatusCode = 404;
-            res.Close();
-            return;
+            res.StatusCode = 404; res.Close(); return;
         }
 
         if (path == "/api/config" && req.HttpMethod == "GET")
@@ -233,6 +247,9 @@ public sealed class TelemetryServer : IDisposable
                 enabledMetrics = cfg.EnabledMetrics,
                 theme = cfg.Theme,
                 fontScale = cfg.FontScale,
+                standbyMode = cfg.StandbyMode,
+                obsPort = cfg.ObsPort,
+                obsPassword = cfg.ObsPassword,
                 macros = cfg.Macros,
                 allMetrics = AppConfig.AllMetrics
             };
@@ -255,19 +272,18 @@ public sealed class TelemetryServer : IDisposable
 
                 string? theme = root.TryGetProperty("theme", out var th) ? th.GetString() : null;
                 double? fontScale = root.TryGetProperty("fontScale", out var fs) && fs.ValueKind == JsonValueKind.Number ? fs.GetDouble() : null;
+                string? standby = root.TryGetProperty("standbyMode", out var sb) ? sb.GetString() : null;
+                int? obsPort = root.TryGetProperty("obsPort", out var op) && op.ValueKind == JsonValueKind.Number ? op.GetInt32() : null;
+                string? obsPass = root.TryGetProperty("obsPassword", out var opw) ? opw.GetString() : null;
 
                 List<MacroButton>? macros = null;
                 if (root.TryGetProperty("macros", out var mc) && mc.ValueKind == JsonValueKind.Array)
                     macros = JsonSerializer.Deserialize<List<MacroButton>>(mc.GetRawText());
 
-                _config.UpdateConfig(metrics, theme, fontScale, macros);
+                _config.UpdateConfig(metrics, theme, fontScale, macros, standby, obsPort, obsPass);
                 await WriteJsonAsync(res, "{\"ok\":true}");
             }
-            catch
-            {
-                res.StatusCode = 400;
-                await WriteJsonAsync(res, "{\"ok\":false}");
-            }
+            catch { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
             return;
         }
 
@@ -294,16 +310,11 @@ public sealed class TelemetryServer : IDisposable
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
                 var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
-                if (result.MessageType == WebSocketMessageType.Close)
-                    break;
+                if (result.MessageType == WebSocketMessageType.Close) break;
             }
         }
         catch { }
-        finally
-        {
-            _sockets.TryRemove(id, out _);
-            try { wsCtx?.WebSocket.Dispose(); } catch { }
-        }
+        finally { _sockets.TryRemove(id, out _); try { wsCtx?.WebSocket.Dispose(); } catch { } }
     }
 
     private static async Task WriteJsonAsync(HttpListenerResponse res, string json)
@@ -318,8 +329,7 @@ public sealed class TelemetryServer : IDisposable
     {
         _cts.Cancel();
         try { _listener.Stop(); _listener.Close(); } catch { }
-        foreach (var ws in _sockets.Values)
-            try { ws.Dispose(); } catch { }
+        foreach (var ws in _sockets.Values) try { ws.Dispose(); } catch { }
         _cts.Dispose();
     }
 
@@ -329,14 +339,14 @@ public sealed class TelemetryServer : IDisposable
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PC Monitor USB — Студия экрана</title>
+<title>PC Monitor USB — Студия экрана v8</title>
 <style>
   * { box-sizing: border-box; }
   body { background:#0b0f14; color:#e6edf3; font-family:system-ui,-apple-system,sans-serif; margin:0; padding:22px; max-width:980px; margin:auto; }
   h1 { font-size:22px; margin:0 0 6px; }
-  h2 { font-size:15px; margin:22px 0 10px; color:#c9d1d9; }
+  h2 { font-size:15px; margin:20px 0 10px; color:#c9d1d9; }
   .sub { color:#8b949e; margin-bottom:16px; font-size:13px; }
-  .topBar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
+  .topBar { display:flex; gap:9px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
   .pill { background:#161b22; border:1px solid #30363d; padding:7px 13px; border-radius:999px; font-size:13px; }
   .ok { color:#3fb950; } .warn { color:#d29922; }
   .btn { background:#21262d; color:#e6edf3; border:1px solid #30363d; border-radius:8px; padding:7px 13px; cursor:pointer; font-size:13px; font-weight:600; }
@@ -347,7 +357,8 @@ public sealed class TelemetryServer : IDisposable
 
   .phoneWrap { display:flex; justify-content:center; margin:12px 0 18px; }
   .phoneFrame {
-    background:#090c10; border:5px solid #2b3442; border-radius:28px; padding:12px;
+    background:#090c10; background-size:cover; background-position:center;
+    border:5px solid #2b3442; border-radius:28px; padding:12px;
     box-shadow:0 16px 40px rgba(0,0,0,0.55); transition:all .2s ease;
     width:700px; min-height:345px; display:flex; flex-direction:column;
   }
@@ -355,7 +366,7 @@ public sealed class TelemetryServer : IDisposable
   .phoneHeader { display:flex; justify-content:space-between; align-items:center; padding:0 4px 8px; font-size:11px; color:#8b949e; }
   .phoneGrid { flex:1; display:grid; gap:8px; grid-template-columns:repeat(3, 1fr); }
   .tile {
-    background:#131922; border:1px solid #243042; border-radius:12px; padding:10px 12px;
+    background:rgba(19,25,34,0.88); border:1px solid #243042; border-radius:12px; padding:10px 12px;
     display:flex; flex-direction:column; justify-content:space-between;
     cursor:grab; user-select:none; position:relative; transition:transform .12s, border-color .12s;
   }
@@ -368,10 +379,10 @@ public sealed class TelemetryServer : IDisposable
   .tileRemove:hover { color:#f85149; }
   .tileVal { font-family:ui-monospace,Consolas,monospace; font-size:28px; font-weight:800; margin:4px 0 2px; color:#58a6ff; }
   .tileUnit { font-size:13px; color:#8b949e; margin-left:4px; }
-  .tileSub { font-size:10px; color:#6e7681; min-height:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tileSub { font-size:10px; color:#8b949e; min-height:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .spark { width:100%; height:22px; margin-top:4px; display:block; }
   .phoneMedia {
-    margin-top:8px; background:#121720; border:1px solid #243042; border-radius:10px;
+    margin-top:8px; background:rgba(18,23,32,0.88); border:1px solid #243042; border-radius:10px;
     padding:6px 10px; display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px;
   }
   .artImg { width:28px; height:28px; border-radius:6px; object-fit:cover; display:none; }
@@ -380,7 +391,7 @@ public sealed class TelemetryServer : IDisposable
   .mBtn { background:#1f2733; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:3px 9px; cursor:pointer; font-size:12px; }
   .mBtn:hover { background:#30363d; }
 
-  .controlsRow { display:flex; gap:14px; flex-wrap:wrap; align-items:center; background:#161b22; border:1px solid #30363d; border-radius:12px; padding:12px 16px; margin-bottom:14px; }
+  .controlsRow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; background:#161b22; border:1px solid #30363d; border-radius:12px; padding:12px 16px; margin-bottom:12px; }
   .chips { display:flex; flex-wrap:wrap; gap:8px; }
   .chip { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:7px 12px; cursor:pointer; font-size:13px; user-select:none; }
   .chip.on { border-color:#58a6ff; background:#132033; }
@@ -388,18 +399,19 @@ public sealed class TelemetryServer : IDisposable
   .row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .macroGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; }
   .macroRow { display:flex; gap:6px; align-items:center; }
-  input[type=text] { background:#0d1117; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:6px 8px; font-size:12px; width:100%; }
+  input[type=text], input[type=password], input[type=number] { background:#0d1117; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:6px 8px; font-size:12px; width:100%; }
   a { color:#58a6ff; text-decoration:none; }
   a:hover { text-decoration:underline; }
 </style>
 </head>
 <body>
-  <h1>PC Monitor USB — студия экрана</h1>
-  <div class="sub">Перетаскивай плитки мышкой, обновляй APK на телефоне по USB в 1 клик, выбирай тему и смотри отчёты просадок.</div>
+  <h1>PC Monitor USB — студия экрана v8</h1>
+  <div class="sub">Перетаскивай плитки, загружай свой фон, подключай OBS WebSocket и обновляй APK на телефоне в 1 клик.</div>
 
   <div class="topBar">
     <div class="pill" id="usb">USB: проверка...</div>
     <div class="pill" id="fpsState">PresentMon: проверка...</div>
+    <div class="pill" id="obsState">OBS: не подключён</div>
     <button class="btn" id="orientBtn" onclick="toggleOrient()">⟳ Вид: Горизонтальный</button>
     <button class="btn" id="autoBtn" onclick="toggleAutoStart()">Автозапуск: ...</button>
     <button class="btn btnGreen" id="apkBtn" onclick="updatePhoneApk()">📲 Обновить APK по USB</button>
@@ -425,7 +437,7 @@ public sealed class TelemetryServer : IDisposable
   </div>
 
   <div class="controlsRow">
-    <div><strong>Тема:</strong></div>
+    <strong>Тема:</strong>
     <button class="btn" id="th_midnight" onclick="setTheme('midnight')">Тёмная</button>
     <button class="btn" id="th_amoled" onclick="setTheme('amoled')">AMOLED</button>
     <button class="btn" id="th_spide" onclick="setTheme('spide')">Тёплая Spide</button>
@@ -437,8 +449,33 @@ public sealed class TelemetryServer : IDisposable
     </div>
   </div>
 
+  <div class="controlsRow">
+    <strong>Фон экрана:</strong>
+    <input type="file" id="bgFile" accept="image/*" style="display:none" onchange="uploadBg(this)">
+    <button class="btn" onclick="document.getElementById('bgFile').click()">🖼 Загрузить картинку</button>
+    <button class="btn" onclick="clearBg()">Убрать фон</button>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <strong>Настольные часы вне игры:</strong>
+      <button class="btn" id="standbyBtn" onclick="toggleStandby()">Выкл</button>
+    </div>
+  </div>
+
   <h2>Виджеты на экране</h2>
   <div class="chips" id="chips"></div>
+
+  <h2>OBS Studio WebSocket (живые кнопки стрима и сцен на телефоне)</h2>
+  <div class="card">
+    <div class="row">
+      <div style="display:flex;gap:8px;align-items:center;flex:1;min-width:260px">
+        <span style="font-size:12px;color:#8b949e;white-space:nowrap">Порт OBS:</span>
+        <input type="number" id="obsPort" value="4455" style="width:90px">
+        <span style="font-size:12px;color:#8b949e;white-space:nowrap">Пароль (если есть):</span>
+        <input type="password" id="obsPass" placeholder="Пусто, если без пароля">
+      </div>
+      <button class="btn btnGreen" onclick="saveObs()">Сохранить OBS</button>
+    </div>
+    <div style="font-size:12px;color:#8b949e;margin-top:8px">В OBS открой: Инструменты → Настройки сервера WebSocket → Включить сервер WebSocket.</div>
+  </div>
 
   <h2>Стримерские кнопки (свайп влево на телефоне)</h2>
   <div class="card">
@@ -460,14 +497,14 @@ public sealed class TelemetryServer : IDisposable
 
 <script>
 const THEMES = {
-  midnight: { bg:'#090c10', card:'#131922', border:'#243042', accent:'#58a6ff' },
-  amoled:   { bg:'#000000', card:'#0a0a0a', border:'#1f242c', accent:'#00e676' },
-  spide:    { bg:'#14100e', card:'#211a16', border:'#3a2d26', accent:'#ff8a50' },
-  cyber:    { bg:'#0b0814', card:'#161026', border:'#352459', accent:'#d946ef' }
+  midnight: { bg:'#090c10', card:'rgba(19,25,34,0.88)', border:'#243042', accent:'#58a6ff' },
+  amoled:   { bg:'#000000', card:'rgba(10,10,10,0.90)', border:'#1f242c', accent:'#00e676' },
+  spide:    { bg:'#14100e', card:'rgba(33,26,22,0.88)', border:'#3a2d26', accent:'#ff8a50' },
+  cyber:    { bg:'#0b0814', card:'rgba(22,16,38,0.88)', border:'#352459', accent:'#d946ef' }
 };
 
 let enabled = [], allMetrics = [], macros = [], latestData = {};
-let theme = 'midnight', fontScale = 1.0, portrait = false, dragId = null, lastArtVer = -1, autoStartOn = false;
+let theme = 'midnight', fontScale = 1.0, standbyMode = 'off', portrait = false, dragId = null, lastArtVer = -1, lastBgVer = -1, autoStartOn = false;
 const history = {};
 
 async function init() {
@@ -477,31 +514,57 @@ async function init() {
   allMetrics = data.allMetrics || [];
   theme = data.theme || 'midnight';
   fontScale = data.fontScale || 1.0;
+  standbyMode = data.standbyMode || 'off';
   macros = data.macros || [];
 
   document.getElementById('fontSlider').value = fontScale;
   document.getElementById('fontVal').textContent = Math.round(fontScale * 100) + '%';
+  document.getElementById('obsPort').value = data.obsPort || 4455;
+  document.getElementById('obsPass').value = data.obsPassword || '';
+  updateStandbyBtn();
 
-  renderAll();
-  renderMacros();
-  pollAutoStart();
-  setInterval(poll, 800);
-  setInterval(pollSession, 3000);
-  poll();
-  pollSession();
+  renderAll(); renderMacros(); pollAutoStart();
+  setInterval(poll, 800); setInterval(pollSession, 3000);
+  poll(); pollSession();
+}
+
+function updateStandbyBtn() {
+  const b = document.getElementById('standbyBtn');
+  b.textContent = standbyMode === 'auto' ? '✓ Авто-часы (30 сек)' : 'Выкл';
+  b.classList.toggle('btnOn', standbyMode === 'auto');
+}
+
+async function toggleStandby() {
+  standbyMode = standbyMode === 'auto' ? 'off' : 'auto';
+  updateStandbyBtn();
+  await saveConfig();
+}
+
+async function uploadBg(input) {
+  if (!input.files || !input.files[0]) return;
+  await fetch('/api/wallpaper', { method:'POST', body: input.files[0] });
+  input.value = '';
+  setTimeout(poll, 250);
+}
+
+async function clearBg() {
+  await fetch('/api/wallpaper', { method:'DELETE' });
+  setTimeout(poll, 250);
+}
+
+async function saveObs() {
+  await saveConfig();
+  alert('Настройки OBS сохранены — агент переподключится через пару секунд.');
 }
 
 async function updatePhoneApk() {
   const b = document.getElementById('apkBtn');
-  b.disabled = true;
-  b.textContent = '⏳ Устанавливаю на телефон...';
+  b.disabled = true; b.textContent = '⏳ Устанавливаю...';
   try {
     const r = await fetch('/api/update-apk', { method: 'POST' });
     const d = await r.json();
     b.textContent = d.ok ? '✓ Обновлено!' : ('✕ ' + (d.message || 'Ошибка'));
-  } catch {
-    b.textContent = '✕ Ошибка связи';
-  }
+  } catch { b.textContent = '✕ Ошибка связи'; }
   setTimeout(() => { b.disabled = false; b.textContent = '📲 Обновить APK по USB'; }, 3500);
 }
 
@@ -517,10 +580,7 @@ async function pollAutoStart() {
 }
 
 async function toggleAutoStart() {
-  const r = await fetch('/api/autostart', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ enabled: !autoStartOn })
-  });
+  const r = await fetch('/api/autostart', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: !autoStartOn }) });
   const d = await r.json();
   autoStartOn = !!d.enabled;
   const b = document.getElementById('autoBtn');
@@ -547,7 +607,8 @@ function setFontScale(v) {
 function applyThemeUI() {
   const th = THEMES[theme] || THEMES.midnight;
   const pf = document.getElementById('phoneFrame');
-  pf.style.background = th.bg; pf.style.borderColor = th.border;
+  if (!pf.style.backgroundImage) pf.style.backgroundColor = th.bg;
+  pf.style.borderColor = th.border;
   document.querySelectorAll('.tile').forEach(el => { el.style.background = th.card; el.style.borderColor = th.border; });
   for (const k of Object.keys(THEMES)) {
     const b = document.getElementById('th_' + k);
@@ -638,7 +699,11 @@ async function toggleMetric(id) {
 async function saveConfig() {
   await fetch('/api/config', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ enabledMetrics: enabled, theme, fontScale, macros })
+    body: JSON.stringify({
+      enabledMetrics: enabled, theme, fontScale, standbyMode, macros,
+      obsPort: parseInt(document.getElementById('obsPort').value || '4455', 10),
+      obsPassword: document.getElementById('obsPass').value || ''
+    })
   });
 }
 
@@ -700,7 +765,16 @@ function updateValues() {
   document.getElementById('usb').innerHTML = d.usbConnected ? '<span class="ok">● USB подключён (' + (d.deviceSerial || 'Android') + ')</span>' : '<span class="warn">○ Телефон не найден по USB</span>';
   document.getElementById('phStatus').innerHTML = d.usbConnected ? '<span class="ok">● USB подключён</span>' : '<span class="warn">○ Ожидание USB</span>';
   document.getElementById('fpsState').innerHTML = d.presentMonActive ? '<span class="ok">● PresentMon активен</span>' : '<span class="warn">○ PresentMon не запущен</span>';
+  document.getElementById('obsState').innerHTML = d.obsConnected
+    ? '<span class="ok">● OBS подключён' + (d.obsStreaming ? ' (LIVE ' + (d.obsStreamTime || '') + ')' : '') + '</span>'
+    : '<span class="warn">○ OBS не подключён</span>';
   document.getElementById('phGame').textContent = d.activeGame ? ('Игра: ' + d.activeGame) : '';
+
+  if (d.wallpaperVersion !== lastBgVer) {
+    lastBgVer = d.wallpaperVersion;
+    const pf = document.getElementById('phoneFrame');
+    pf.style.backgroundImage = lastBgVer > 0 ? `linear-gradient(rgba(9,12,16,0.52),rgba(9,12,16,0.72)), url('/api/wallpaper?v=${lastBgVer}')` : '';
+  }
 
   if (d.mediaTitle) {
     document.getElementById('mediaInfo').textContent = (d.mediaPlaying ? '▶ ' : '⏸ ') + d.mediaTitle + (d.mediaArtist ? ' — ' + d.mediaArtist : '');
@@ -727,6 +801,7 @@ function updateValues() {
   setTile('ram_load', d.ramLoad != null ? Math.round(d.ramLoad) : '--', d.ramUsedGb != null ? (d.ramUsedGb + ' / ' + (d.ramTotalGb ?? '?') + ' ГБ') : '', d.ramLoad, 100, d.ramLoad != null ? colorForLoad(d.ramLoad) : '#8b949e');
   const vPct = (d.gpuVramUsedGb != null && d.gpuVramTotalGb) ? (d.gpuVramUsedGb / d.gpuVramTotalGb * 100) : null;
   setTile('gpu_vram', d.gpuVramUsedGb != null ? d.gpuVramUsedGb.toFixed(1) : '--', d.gpuVramTotalGb ? ('из ' + d.gpuVramTotalGb.toFixed(1) + ' ГБ') : '', vPct, 100, vPct != null ? colorForLoad(vPct) : '#8b949e');
+  setTile('net_speed', d.netUpMbps != null ? ('↑' + d.netUpMbps.toFixed(1)) : '--', d.netDownMbps != null ? ('↓ ' + d.netDownMbps.toFixed(1) + ' Мбит/с') : '', d.netUpMbps, 50, '#2dd4bf');
   setTile('cpu_power', d.cpuPower != null ? Math.round(d.cpuPower) : '--', '', d.cpuPower, 120, acc);
   setTile('gpu_power', d.gpuPower != null ? Math.round(d.gpuPower) : '--', '', d.gpuPower, 200, acc);
   setTile('cpu_clock', d.cpuClock != null ? Math.round(d.cpuClock) : '--', '', d.cpuClock, 5000, acc);

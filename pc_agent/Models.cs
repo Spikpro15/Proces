@@ -28,6 +28,15 @@ public class AppConfig
     [JsonPropertyName("fontScale")]
     public double FontScale { get; set; } = 1.0;
 
+    [JsonPropertyName("standbyMode")]
+    public string StandbyMode { get; set; } = "off"; // "off", "auto"
+
+    [JsonPropertyName("obsPort")]
+    public int ObsPort { get; set; } = 4455;
+
+    [JsonPropertyName("obsPassword")]
+    public string ObsPassword { get; set; } = "";
+
     [JsonPropertyName("enabledMetrics")]
     public List<string> EnabledMetrics { get; set; } = new()
     {
@@ -54,9 +63,10 @@ public class AppConfig
         new("gpu_temp", "Темп. GPU", "°C", "Температура чипа видеокарты"),
         new("ram_load", "Оперативная память", "%", "Загрузка ОЗУ в процентах и ГБ"),
         new("gpu_vram", "Видеопамять", "ГБ", "Занятая видеопамять (VRAM)"),
+        new("net_speed", "Сеть ↑↓", "Мбит", "Отдача (битрейт стрима) и загрузка"),
         new("cpu_power", "Питание CPU", "Вт", "Потребление процессора"),
         new("gpu_power", "Питание GPU", "Вт", "Потребление видеокарты"),
-        new("cpu_clock", "Частота CPU", "МГц", "Средняя/максимальная частота ядер CPU"),
+        new("cpu_clock", "Частота CPU", "МГц", "Частота ядер процессора"),
         new("gpu_clock", "Частота GPU", "МГц", "Частота ядра видеокарты")
     };
 }
@@ -70,105 +80,52 @@ public record MetricDefinition(
 
 public class TelemetryPayload
 {
-    [JsonPropertyName("timestamp")]
-    public long Timestamp { get; set; }
+    [JsonPropertyName("timestamp")] public long Timestamp { get; set; }
+    [JsonPropertyName("usbConnected")] public bool UsbConnected { get; set; }
+    [JsonPropertyName("deviceSerial")] public string? DeviceSerial { get; set; }
+    [JsonPropertyName("presentMonActive")] public bool PresentMonActive { get; set; }
+    [JsonPropertyName("activeGame")] public string? ActiveGame { get; set; }
+    [JsonPropertyName("fps")] public int? Fps { get; set; }
+    [JsonPropertyName("fps1Low")] public int? Fps1Low { get; set; }
 
-    [JsonPropertyName("usbConnected")]
-    public bool UsbConnected { get; set; }
+    [JsonPropertyName("cpuName")] public string CpuName { get; set; } = "";
+    [JsonPropertyName("gpuName")] public string GpuName { get; set; } = "";
+    [JsonPropertyName("cpuLoad")] public double? CpuLoad { get; set; }
+    [JsonPropertyName("cpuTemp")] public double? CpuTemp { get; set; }
+    [JsonPropertyName("cpuPower")] public double? CpuPower { get; set; }
+    [JsonPropertyName("cpuClock")] public double? CpuClock { get; set; }
+    [JsonPropertyName("gpuLoad")] public double? GpuLoad { get; set; }
+    [JsonPropertyName("gpuTemp")] public double? GpuTemp { get; set; }
+    [JsonPropertyName("gpuPower")] public double? GpuPower { get; set; }
+    [JsonPropertyName("gpuClock")] public double? GpuClock { get; set; }
+    [JsonPropertyName("gpuVramUsedGb")] public double? GpuVramUsedGb { get; set; }
+    [JsonPropertyName("gpuVramTotalGb")] public double? GpuVramTotalGb { get; set; }
+    [JsonPropertyName("ramLoad")] public double? RamLoad { get; set; }
+    [JsonPropertyName("ramUsedGb")] public double? RamUsedGb { get; set; }
+    [JsonPropertyName("ramTotalGb")] public double? RamTotalGb { get; set; }
+    [JsonPropertyName("netUpMbps")] public double? NetUpMbps { get; set; }
+    [JsonPropertyName("netDownMbps")] public double? NetDownMbps { get; set; }
 
-    [JsonPropertyName("deviceSerial")]
-    public string? DeviceSerial { get; set; }
+    [JsonPropertyName("mediaTitle")] public string? MediaTitle { get; set; }
+    [JsonPropertyName("mediaArtist")] public string? MediaArtist { get; set; }
+    [JsonPropertyName("mediaPlaying")] public bool MediaPlaying { get; set; }
+    [JsonPropertyName("mediaArtVersion")] public int MediaArtVersion { get; set; }
+    [JsonPropertyName("mediaPosSec")] public double? MediaPosSec { get; set; }
+    [JsonPropertyName("mediaDurSec")] public double? MediaDurSec { get; set; }
 
-    [JsonPropertyName("presentMonActive")]
-    public bool PresentMonActive { get; set; }
+    [JsonPropertyName("obsConnected")] public bool ObsConnected { get; set; }
+    [JsonPropertyName("obsStreaming")] public bool ObsStreaming { get; set; }
+    [JsonPropertyName("obsRecording")] public bool ObsRecording { get; set; }
+    [JsonPropertyName("obsStreamTime")] public string? ObsStreamTime { get; set; }
+    [JsonPropertyName("obsCurrentScene")] public string? ObsCurrentScene { get; set; }
+    [JsonPropertyName("obsScenes")] public List<string> ObsScenes { get; set; } = new();
 
-    [JsonPropertyName("activeGame")]
-    public string? ActiveGame { get; set; }
-
-    [JsonPropertyName("fps")]
-    public int? Fps { get; set; }
-
-    [JsonPropertyName("fps1Low")]
-    public int? Fps1Low { get; set; }
-
-    [JsonPropertyName("cpuName")]
-    public string CpuName { get; set; } = "";
-
-    [JsonPropertyName("gpuName")]
-    public string GpuName { get; set; } = "";
-
-    [JsonPropertyName("cpuLoad")]
-    public double? CpuLoad { get; set; }
-
-    [JsonPropertyName("cpuTemp")]
-    public double? CpuTemp { get; set; }
-
-    [JsonPropertyName("cpuPower")]
-    public double? CpuPower { get; set; }
-
-    [JsonPropertyName("cpuClock")]
-    public double? CpuClock { get; set; }
-
-    [JsonPropertyName("gpuLoad")]
-    public double? GpuLoad { get; set; }
-
-    [JsonPropertyName("gpuTemp")]
-    public double? GpuTemp { get; set; }
-
-    [JsonPropertyName("gpuPower")]
-    public double? GpuPower { get; set; }
-
-    [JsonPropertyName("gpuClock")]
-    public double? GpuClock { get; set; }
-
-    [JsonPropertyName("gpuVramUsedGb")]
-    public double? GpuVramUsedGb { get; set; }
-
-    [JsonPropertyName("gpuVramTotalGb")]
-    public double? GpuVramTotalGb { get; set; }
-
-    [JsonPropertyName("ramLoad")]
-    public double? RamLoad { get; set; }
-
-    [JsonPropertyName("ramUsedGb")]
-    public double? RamUsedGb { get; set; }
-
-    [JsonPropertyName("ramTotalGb")]
-    public double? RamTotalGb { get; set; }
-
-    [JsonPropertyName("mediaTitle")]
-    public string? MediaTitle { get; set; }
-
-    [JsonPropertyName("mediaArtist")]
-    public string? MediaArtist { get; set; }
-
-    [JsonPropertyName("mediaPlaying")]
-    public bool MediaPlaying { get; set; }
-
-    [JsonPropertyName("mediaArtVersion")]
-    public int MediaArtVersion { get; set; }
-
-    [JsonPropertyName("mediaPosSec")]
-    public double? MediaPosSec { get; set; }
-
-    [JsonPropertyName("mediaDurSec")]
-    public double? MediaDurSec { get; set; }
-
-    [JsonPropertyName("pcApkAvailable")]
-    public bool PcApkAvailable { get; set; }
-
-    [JsonPropertyName("pcApkStamp")]
-    public string? PcApkStamp { get; set; }
-
-    [JsonPropertyName("theme")]
-    public string Theme { get; set; } = "midnight";
-
-    [JsonPropertyName("fontScale")]
-    public double FontScale { get; set; } = 1.0;
-
-    [JsonPropertyName("enabledMetrics")]
-    public List<string> EnabledMetrics { get; set; } = new();
-
-    [JsonPropertyName("macros")]
-    public List<MacroButton> Macros { get; set; } = new();
+    [JsonPropertyName("pcApkAvailable")] public bool PcApkAvailable { get; set; }
+    [JsonPropertyName("pcApkStamp")] public string? PcApkStamp { get; set; }
+    [JsonPropertyName("wallpaperVersion")] public int WallpaperVersion { get; set; }
+    [JsonPropertyName("standbyMode")] public string StandbyMode { get; set; } = "off";
+    [JsonPropertyName("theme")] public string Theme { get; set; } = "midnight";
+    [JsonPropertyName("fontScale")] public double FontScale { get; set; } = 1.0;
+    [JsonPropertyName("enabledMetrics")] public List<string> EnabledMetrics { get; set; } = new();
+    [JsonPropertyName("macros")] public List<MacroButton> Macros { get; set; } = new();
 }
