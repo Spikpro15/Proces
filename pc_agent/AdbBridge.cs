@@ -110,8 +110,7 @@ public sealed class AdbBridge : IDisposable
             var stdout = await proc.StandardOutput.ReadToEndAsync();
             var stderr = await proc.StandardError.ReadToEndAsync();
             await proc.WaitForExitAsync();
-            return string.IsNullOrWhiteSpace(stdout) ? stderr : stdout;
-        }
+            return $"{stdout}\n{stderr}";        }
         catch { return null; }
     }
 
