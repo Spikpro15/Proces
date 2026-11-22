@@ -462,6 +462,28 @@ class MainActivity : AppCompatActivity() {
             cornerRadius = 28f
         }
 
+    private fun macroAccentFor(idx: Int, label: String): Int {
+        val low = label.lowercase()
+        return when {
+            "запис" in low || "стрим" in low || "rec" in low -> Color.parseColor("#F85149")
+            "мут" in low || "мик" in low || "mic" in low -> Color.parseColor("#FF7B72")
+            "сцен" in low || "scene" in low -> Color.parseColor("#A371F7")
+            "скрин" in low || "shot" in low -> Color.parseColor("#3FB950")
+            "звук" in low || "vol" in low -> Color.parseColor("#D29922")
+            else -> listOf("#58A6FF", "#A371F7", "#3FB950", "#FF8A50", "#F85149", "#2DD4BF")[idx % 6].let { Color.parseColor(it) }
+        }
+    }
+
+    private fun splitIconAndTitle(raw: String): Pair<String, String> {
+        val trimmed = raw.trim()
+        val sp = trimmed.indexOf(' ')
+        return if (sp in 1..4) {
+            trimmed.substring(0, sp) to trimmed.substring(sp + 1).trim()
+        } else {
+            "⚡" to trimmed
+        }
+    }
+
     private fun rebuildMacroGrid() {
         macroGrid.removeAllViews()
         val th = themes[currentTheme] ?: themes["midnight"]!!
@@ -472,27 +494,68 @@ class MainActivity : AppCompatActivity() {
         macroGrid.columnCount = cols
         macroGrid.rowCount = rows
 
+        val inflater = LayoutInflater.from(this)
         macros.forEachIndexed { idx, m ->
-            val btn = TextView(this).apply {
-                text = "${m.label}\n${m.hotkey}"
-                setTextColor(Color.parseColor("#E6EDF3"))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                gravity = Gravity.CENTER
-                background = makeCardDrawable(th.card, th.border)
-                setPadding(16, 16, 16, 16)
-                setOnClickListener { v ->
-                    v.animate().scaleX(0.94f).scaleY(0.94f).setDuration(80).withEndAction {
-                        v.animate().scaleX(1f).scaleY(1f).setDuration(90).start()
-                    }.start()
-                    sendPost(macroUrl, JSONObject().put("hotkey", m.hotkey))
-                }
+            val tile = inflater.inflate(R.layout.item_macro_tile, macroGrid, false)
+            val accent = macroAccentFor(idx, m.label)
+            val (icon, title) = splitIconAndTitle(m.label)
+
+            val softBg = Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent))
+            val subtleBorder = Color.argb(105, Color.red(accent), Color.green(accent), Color.blue(accent))
+            val normalBg = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(
+                    Color.argb(255, ((Color.red(th.card) * 4 + Color.red(accent)) / 5), ((Color.green(th.card) * 4 + Color.green(accent)) / 5), ((Color.blue(th.card) * 4 + Color.blue(accent)) / 5)),
+                    th.card
+                )
+            ).apply {
+                cornerRadius = 38f
+                setStroke(2, subtleBorder)
             }
+            val flashBg = GradientDrawable().apply {
+                setColor(Color.argb(95, Color.red(accent), Color.green(accent), Color.blue(accent)))
+                cornerRadius = 38f
+                setStroke(3, accent)
+            }
+
+            tile.background = normalBg
+
+            val tvIcon = tile.findViewById<TextView>(R.id.tvMacroIcon)
+            val tvTitle = tile.findViewById<TextView>(R.id.tvMacroTitle)
+            val tvKey = tile.findViewById<TextView>(R.id.tvMacroHotkey)
+
+            tvIcon.text = icon
+            tvIcon.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(softBg)
+                setStroke(2, subtleBorder)
+            }
+            tvTitle.text = title
+            tvKey.text = m.hotkey
+            tvKey.setTextColor(accent)
+            tvKey.background = GradientDrawable().apply {
+                setColor(Color.parseColor("#22000000"))
+                cornerRadius = 18f
+                setStroke(1, Color.argb(70, Color.red(accent), Color.green(accent), Color.blue(accent)))
+            }
+
+            tile.setOnClickListener { v ->
+                v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                v.background = flashBg
+                v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80).withEndAction {
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(120).withEndAction {
+                        v.background = normalBg
+                    }.start()
+                }.start()
+                sendPost(macroUrl, JSONObject().put("hotkey", m.hotkey))
+            }
+
             val params = GridLayout.LayoutParams(
                 GridLayout.spec(idx / cols, 1f),
                 GridLayout.spec(idx % cols, 1f)
             ).apply { width = 0; height = 0; setMargins(10, 10, 10, 10) }
-            btn.layoutParams = params
-            macroGrid.addView(btn)
+            tile.layoutParams = params
+            macroGrid.addView(tile)
         }
     }
 

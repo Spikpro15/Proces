@@ -63,12 +63,7 @@ public sealed class AdbBridge : IDisposable
         try
         {
             var output = await RunAdbAsync("devices");
-            if (output is null)
-            {
-                IsConnected = false;
-                DeviceSerial = null;
-                return;
-            }
+            if (output is null) { IsConnected = false; DeviceSerial = null; return; }
 
             string? serial = null;
             foreach (var rawLine in output.Split('\n'))
@@ -78,11 +73,7 @@ public sealed class AdbBridge : IDisposable
                     line.Contains(" device", StringComparison.OrdinalIgnoreCase))
                 {
                     var parts = line.Split(new[] { '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length >= 2 && parts[1] == "device")
-                    {
-                        serial = parts[0];
-                        break;
-                    }
+                    if (parts.Length >= 2 && parts[1] == "device") { serial = parts[0]; break; }
                 }
             }
 
@@ -98,11 +89,7 @@ public sealed class AdbBridge : IDisposable
                 DeviceSerial = null;
             }
         }
-        catch
-        {
-            IsConnected = false;
-            DeviceSerial = null;
-        }
+        catch { IsConnected = false; DeviceSerial = null; }
     }
 
     private async Task<string?> RunAdbAsync(string args)
