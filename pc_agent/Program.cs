@@ -59,11 +59,13 @@ static class Program
 
                 try
                 {
-                    var (mTitle, mArtist, mPlaying, artVer) = await media.GetMediaInfoAsync();
+                    var (mTitle, mArtist, mPlaying, artVer, posSec, durSec) = await media.GetMediaInfoAsync();
                     payload.MediaTitle = mTitle;
                     payload.MediaArtist = mArtist;
                     payload.MediaPlaying = mPlaying;
                     payload.MediaArtVersion = artVer;
+                    payload.MediaPosSec = posSec;
+                    payload.MediaDurSec = durSec;
                 }
                 catch { }
 
@@ -120,8 +122,8 @@ static class Program
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
         };
 
-        tray.ShowBalloonTip(2500, "PC Monitor USB v4 запущен",
-            "Свайп вверх — плеер с обложкой, свайп влево — кнопки Stream Deck.", ToolTipIcon.Info);
+        tray.ShowBalloonTip(2500, "PC Monitor USB v5 запущен",
+            "Свайп вверх — обновлённый плеер, свайп влево — кнопки Stream Deck.", ToolTipIcon.Info);
 
         Application.Run();
         cts.Cancel();

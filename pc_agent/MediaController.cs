@@ -5,10 +5,6 @@ using Windows.Media.Control;
 
 namespace PCMonitorAgent;
 
-/// <summary>
-/// Reads currently playing Windows media (title, artist, playback status, and resized JPEG album art)
-/// and executes playback / volume commands.
-/// </summary>
 public sealed class MediaController
 {
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
@@ -16,6 +12,8 @@ public sealed class MediaController
     private string? _cachedTitle;
     private string? _cachedArtist;
     private bool _cachedPlaying;
+    private double? _cachedPosSec;
+    private double? _cachedDurSec;
     private string _lastTrackKey = "";
     private byte[]? _cachedArtJpeg;
     private int _artVersion;
@@ -30,11 +28,11 @@ public sealed class MediaController
 
     public byte[]? CurrentArtJpeg => _cachedArtJpeg;
 
-    public async Task<(string? Title, string? Artist, bool Playing, int ArtVersion)> GetMediaInfoAsync()
+    public async Task<(string? Title, string? Artist, bool Playing, int ArtVersion, double? PosSec, double? DurSec)> GetMediaInfoAsync()
     {
         var now = Environment.TickCount64;
-        if (now - _lastPollTick < 900)
-            return (_cachedTitle, _cachedArtist, _cachedPlaying, _artVersion);
+        if (now - _lastPollTick < 750)
+            return (_cachedTitle, _cachedArtist, _cachedPlaying, _artVersion, _cachedPosSec, _cachedDurSec);
         _lastPollTick = now;
 
         try
@@ -46,21 +44,42 @@ public sealed class MediaController
                 _cachedTitle = null;
                 _cachedArtist = null;
                 _cachedPlaying = false;
+                _cachedPosSec = null;
+                _cachedDurSec = null;
                 if (_cachedArtJpeg is not null)
                 {
                     _cachedArtJpeg = null;
                     _lastTrackKey = "";
                     _artVersion++;
                 }
-                return (null, null, false, _artVersion);
+                return (null, null, false, _artVersion, null, null);
             }
 
             var props = await session.TryGetMediaPropertiesAsync();
             var playback = session.GetPlaybackInfo();
+            var timeline = session.GetTimelineProperties();
 
             _cachedTitle = string.IsNullOrWhiteSpace(props?.Title) ? null : props.Title.Trim();
             _cachedArtist = string.IsNullOrWhiteSpace(props?.Artist) ? null : props.Artist.Trim();
             _cachedPlaying = playback?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+
+            if (timeline is not null && timeline.EndTime.TotalSeconds > 1)
+            {
+                double dur = timeline.EndTime.TotalSeconds;
+                double pos = timeline.Position.TotalSeconds;
+                if (_cachedPlaying && timeline.LastUpdatedTime != DateTimeOffset.MinValue)
+                {
+                    double elapsed = (DateTimeOffset.UtcNow - timeline.LastUpdatedTime).TotalSeconds;
+                    if (elapsed > 0 && elapsed < 3600) pos += elapsed;
+                }
+                _cachedDurSec = Math.Round(dur, 1);
+                _cachedPosSec = Math.Round(Math.Clamp(pos, 0, dur), 1);
+            }
+            else
+            {
+                _cachedPosSec = null;
+                _cachedDurSec = null;
+            }
 
             var trackKey = $"{_cachedTitle}|{_cachedArtist}";
             if (trackKey != _lastTrackKey)
@@ -75,9 +94,11 @@ public sealed class MediaController
             _cachedTitle = null;
             _cachedArtist = null;
             _cachedPlaying = false;
+            _cachedPosSec = null;
+            _cachedDurSec = null;
         }
 
-        return (_cachedTitle, _cachedArtist, _cachedPlaying, _artVersion);
+        return (_cachedTitle, _cachedArtist, _cachedPlaying, _artVersion, _cachedPosSec, _cachedDurSec);
     }
 
     private static async Task<byte[]?> ExtractThumbnailJpegAsync(Windows.Storage.Streams.IRandomAccessStreamReference? thumbRef)
@@ -89,7 +110,7 @@ public sealed class MediaController
             using var netStream = winrtStream.AsStreamForRead();
             using var orig = new Bitmap(netStream);
 
-            const int size = 240;
+            const int size = 280;
             using var resized = new Bitmap(size, size);
             using (var g = Graphics.FromImage(resized))
             {

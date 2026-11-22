@@ -153,6 +153,12 @@ public class TelemetryPayload
     [JsonPropertyName("mediaArtVersion")]
     public int MediaArtVersion { get; set; }
 
+    [JsonPropertyName("mediaPosSec")]
+    public double? MediaPosSec { get; set; }
+
+    [JsonPropertyName("mediaDurSec")]
+    public double? MediaDurSec { get; set; }
+
     [JsonPropertyName("theme")]
     public string Theme { get; set; } = "midnight";
 

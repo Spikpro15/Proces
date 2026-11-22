@@ -4,8 +4,10 @@ import android.app.AlertDialog
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +19,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.GridLayout
 import android.widget.ImageView
@@ -61,9 +64,11 @@ class MainActivity : AppCompatActivity() {
     private var isMediaOpen = false
     private var isMacroOpen = false
     private var lastArtVersion = -1
+    private var lastMediaPlaying: Boolean? = null
 
     private var currentTheme = "midnight"
     private var currentFontScale = 1.0f
+    private var mediaAccentColor = Color.parseColor("#58A6FF")
 
     private data class ThemeColors(val bg: Int, val card: Int, val border: Int, val accent: Int)
     private val themes = mapOf(
@@ -80,11 +85,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var metricsGrid: GridLayout
     private lateinit var tvMiniMedia: TextView
     private lateinit var mediaOverlay: View
+    private lateinit var ivMediaBackdrop: ImageView
     private lateinit var ivMediaArt: ImageView
     private lateinit var tvMediaStatus: TextView
     private lateinit var tvMediaTitle: TextView
     private lateinit var tvMediaArtist: TextView
-    private lateinit var btnPlayPause: TextView
+    private lateinit var audioVisualizer: AudioVisualizerView
+    private lateinit var mediaProgress: ProgressBar
+    private lateinit var tvMediaPos: TextView
+    private lateinit var tvMediaDur: TextView
+    private lateinit var btnPlayPause: ImageView
     private lateinit var macroOverlay: View
     private lateinit var macroGrid: GridLayout
 
@@ -144,13 +154,26 @@ class MainActivity : AppCompatActivity() {
         metricsGrid = findViewById(R.id.metricsGrid)
         tvMiniMedia = findViewById(R.id.tvMiniMedia)
         mediaOverlay = findViewById(R.id.mediaOverlay)
+        ivMediaBackdrop = findViewById(R.id.ivMediaBackdrop)
         ivMediaArt = findViewById(R.id.ivMediaArt)
         tvMediaStatus = findViewById(R.id.tvMediaStatus)
         tvMediaTitle = findViewById(R.id.tvMediaTitle)
         tvMediaArtist = findViewById(R.id.tvMediaArtist)
+        audioVisualizer = findViewById(R.id.audioVisualizer)
+        mediaProgress = findViewById(R.id.mediaProgress)
+        tvMediaPos = findViewById(R.id.tvMediaPos)
+        tvMediaDur = findViewById(R.id.tvMediaDur)
         btnPlayPause = findViewById(R.id.btnPlayPause)
         macroOverlay = findViewById(R.id.macroOverlay)
         macroGrid = findViewById(R.id.macroGrid)
+
+        // Crisp 22dp rounded corners on album art
+        ivMediaArt.clipToOutline = true
+        ivMediaArt.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setRoundRect(0, 0, view.width, view.height, 40f)
+            }
+        }
 
         findViewById<View>(R.id.btnSettings).setOnClickListener { openSettingsDialog() }
         findViewById<View>(R.id.btnRotate).setOnClickListener { cycleOrientation() }
@@ -160,12 +183,12 @@ class MainActivity : AppCompatActivity() {
         tvMiniMedia.setOnClickListener { showMediaOverlay(true) }
         findViewById<View>(R.id.btnCloseMedia).setOnClickListener { showMediaOverlay(false) }
 
-        findViewById<View>(R.id.btnPrev).setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "prev")) }
-        btnPlayPause.setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "play_pause")) }
-        findViewById<View>(R.id.btnNext).setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "next")) }
-        findViewById<View>(R.id.btnVolDown).setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "vol_down")) }
-        findViewById<View>(R.id.btnVolMute).setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "vol_mute")) }
-        findViewById<View>(R.id.btnVolUp).setOnClickListener { sendPost(mediaUrl, JSONObject().put("action", "vol_up")) }
+        setupBouncyMediaBtn(findViewById(R.id.btnPrev), "prev")
+        setupBouncyMediaBtn(btnPlayPause, "play_pause")
+        setupBouncyMediaBtn(findViewById(R.id.btnNext), "next")
+        setupBouncyMediaBtn(findViewById(R.id.btnVolDown), "vol_down")
+        setupBouncyMediaBtn(findViewById(R.id.btnVolMute), "vol_mute")
+        setupBouncyMediaBtn(findViewById(R.id.btnVolUp), "vol_up")
 
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
@@ -187,8 +210,18 @@ class MainActivity : AppCompatActivity() {
         rebuildGrid()
         rebuildMacroGrid()
         applyTheme()
+        applyMediaAccent(mediaAccentColor)
         applyImmersiveMode()
         connectWebSocket()
+    }
+
+    private fun setupBouncyMediaBtn(view: View, action: String) {
+        view.setOnClickListener { v ->
+            v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(75).withEndAction {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(110).start()
+            }.start()
+            sendPost(mediaUrl, JSONObject().put("action", action))
+        }
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
@@ -203,7 +236,7 @@ class MainActivity : AppCompatActivity() {
         if (show) {
             mediaOverlay.visibility = View.VISIBLE
             mediaOverlay.translationY = h
-            mediaOverlay.animate().translationY(0f).setDuration(220).start()
+            mediaOverlay.animate().translationY(0f).setDuration(240).start()
         } else {
             mediaOverlay.animate().translationY(h).setDuration(200).withEndAction {
                 mediaOverlay.visibility = View.GONE
@@ -241,7 +274,7 @@ class MainActivity : AppCompatActivity() {
         val req = Request.Builder().url(mediaArtUrl).build()
         client.newCall(req).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                mainHandler.post { ivMediaArt.visibility = View.GONE }
+                mainHandler.post { clearAlbumArt() }
             }
             override fun onResponse(call: okhttp3.Call, response: Response) {
                 response.use { res ->
@@ -250,18 +283,110 @@ class MainActivity : AppCompatActivity() {
                         if (bytes != null && bytes.isNotEmpty()) {
                             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                             if (bmp != null) {
+                                val blurred = fastBlur(bmp, 12)
+                                val vibrant = extractVibrantColor(bmp)
                                 mainHandler.post {
                                     ivMediaArt.setImageBitmap(bmp)
                                     ivMediaArt.visibility = View.VISIBLE
+                                    ivMediaBackdrop.setImageBitmap(blurred)
+                                    applyMediaAccent(vibrant)
                                 }
                                 return
                             }
                         }
                     }
-                    mainHandler.post { ivMediaArt.visibility = View.GONE }
+                    mainHandler.post { clearAlbumArt() }
                 }
             }
         })
+    }
+
+    private fun clearAlbumArt() {
+        ivMediaArt.visibility = View.GONE
+        ivMediaBackdrop.setImageBitmap(null)
+        applyMediaAccent((themes[currentTheme] ?: themes["midnight"]!!).accent)
+    }
+
+    private fun applyMediaAccent(color: Int) {
+        mediaAccentColor = color
+        tvMediaStatus.setTextColor(color)
+        audioVisualizer.setAccentColor(color)
+        mediaProgress.progressTintList = ColorStateList.valueOf(color)
+        mediaProgress.progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#33FFFFFF"))
+        btnPlayPause.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(color)
+        }
+    }
+
+    private fun extractVibrantColor(bmp: Bitmap): Int {
+        val small = Bitmap.createScaledBitmap(bmp, 16, 16, true)
+        var bestColor = Color.parseColor("#58A6FF")
+        var bestScore = -1f
+        val hsv = FloatArray(3)
+        for (y in 0 until 16) {
+            for (x in 0 until 16) {
+                val c = small.getPixel(x, y)
+                Color.colorToHSV(c, hsv)
+                val sat = hsv[1]
+                val v = hsv[2]
+                if (v > 0.28f && sat > 0.25f) {
+                    val score = sat * 1.4f + v * 0.6f
+                    if (score > bestScore) {
+                        bestScore = score
+                        hsv[2] = v.coerceIn(0.68f, 0.96f)
+                        hsv[1] = sat.coerceIn(0.50f, 0.92f)
+                        bestColor = Color.HSVToColor(hsv)
+                    }
+                }
+            }
+        }
+        small.recycle()
+        return bestColor
+    }
+
+    private fun fastBlur(src: Bitmap, radius: Int): Bitmap {
+        val w = 48
+        val h = 48
+        val bmp = Bitmap.createScaledBitmap(src, w, h, true)
+        val pix = IntArray(w * h)
+        bmp.getPixels(pix, 0, w, 0, 0, w, h)
+        val tmp = IntArray(w * h)
+        val r = radius.coerceIn(2, 16)
+        repeat(2) {
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    var rs = 0; var gs = 0; var bs = 0; var cnt = 0
+                    for (dx in -r..r) {
+                        val nx = (x + dx).coerceIn(0, w - 1)
+                        val c = pix[y * w + nx]
+                        rs += Color.red(c); gs += Color.green(c); bs += Color.blue(c); cnt++
+                    }
+                    tmp[y * w + x] = Color.rgb(rs / cnt, gs / cnt, bs / cnt)
+                }
+            }
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    var rs = 0; var gs = 0; var bs = 0; var cnt = 0
+                    for (dy in -r..r) {
+                        val ny = (y + dy).coerceIn(0, h - 1)
+                        val c = tmp[ny * w + x]
+                        rs += Color.red(c); gs += Color.green(c); bs += Color.blue(c); cnt++
+                    }
+                    pix[y * w + x] = Color.rgb(rs / cnt, gs / cnt, bs / cnt)
+                }
+            }
+        }
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        out.setPixels(pix, 0, w, 0, 0, w, h)
+        bmp.recycle()
+        return out
+    }
+
+    private fun formatTime(sec: Double?): String {
+        if (sec == null || sec.isNaN() || sec < 0) return "0:00"
+        val total = sec.roundToInt()
+        return "%d:%02d".format(total / 60, total % 60)
     }
 
     private fun applyTheme() {
@@ -509,30 +634,51 @@ class MainActivity : AppCompatActivity() {
         val game = d.optString("activeGame", "")
         tvGameName.text = if (game.isNotEmpty() && game != "null") "Игра: $game" else ""
 
-        // Media + album art
+        // Next-Gen Media Player updates
         val mTitle = if (d.isNull("mediaTitle")) "" else d.optString("mediaTitle", "")
         val mArtist = if (d.isNull("mediaArtist")) "" else d.optString("mediaArtist", "")
         val mPlaying = d.optBoolean("mediaPlaying", false)
         val artVer = d.optInt("mediaArtVersion", 0)
+        val posSec = optNullableDouble(d, "mediaPosSec")
+        val durSec = optNullableDouble(d, "mediaDurSec")
+
         if (artVer != lastArtVersion) {
             lastArtVersion = artVer
-            if (mTitle.isNotEmpty()) fetchAlbumArt() else ivMediaArt.visibility = View.GONE
+            if (mTitle.isNotEmpty()) fetchAlbumArt() else clearAlbumArt()
+        }
+
+        if (lastMediaPlaying != mPlaying) {
+            lastMediaPlaying = mPlaying
+            audioVisualizer.setPlaying(mPlaying && mTitle.isNotEmpty())
+            val scale = if (mPlaying) 1.0f else 0.88f
+            ivMediaArt.animate().scaleX(scale).scaleY(scale).setDuration(260).start()
         }
 
         if (mTitle.isNotEmpty()) {
             val icon = if (mPlaying) "▶" else "⏸"
             tvMiniMedia.text = "⌃ $icon $mTitle" + if (mArtist.isNotEmpty()) " — $mArtist" else ""
-            tvMediaStatus.text = if (mPlaying) "▶ Сейчас играет" else "⏸ На паузе"
+            tvMediaStatus.text = if (mPlaying) "NOW PLAYING" else "PAUSED"
             tvMediaTitle.text = mTitle
             tvMediaArtist.text = mArtist
-            btnPlayPause.text = if (mPlaying) "⏸" else "▶"
+            btnPlayPause.setImageResource(if (mPlaying) R.drawable.ic_pause else R.drawable.ic_play)
+            tvMediaPos.text = formatTime(posSec)
+            tvMediaDur.text = formatTime(durSec)
+            if (posSec != null && durSec != null && durSec > 0) {
+                mediaProgress.progress = ((posSec / durSec) * 1000.0).roundToInt().coerceIn(0, 1000)
+            } else {
+                mediaProgress.progress = 0
+            }
         } else {
             tvMiniMedia.text = "⌃ Свайп вверх — плеер · ⇠ Свайп влево — кнопки"
-            tvMediaStatus.text = "Плеер Windows"
+            tvMediaStatus.text = "WINDOWS MEDIA"
             tvMediaTitle.text = "Ничего не играет"
             tvMediaArtist.text = ""
-            btnPlayPause.text = "⏯"
-            ivMediaArt.visibility = View.GONE
+            btnPlayPause.setImageResource(R.drawable.ic_play)
+            tvMediaPos.text = "0:00"
+            tvMediaDur.text = "0:00"
+            mediaProgress.progress = 0
+            audioVisualizer.setPlaying(false)
+            clearAlbumArt()
         }
 
         val accentColor = (themes[currentTheme] ?: themes["midnight"]!!).accent
@@ -541,8 +687,7 @@ class MainActivity : AppCompatActivity() {
             val fps = if (d.isNull("fps")) null else d.optInt("fps")
             val low1 = if (d.isNull("fps1Low")) null else d.optInt("fps1Low")
             if (fps != null) {
-                c.tvValue.text = fps.toString()
-                c.tvUnit.text = "FPS"
+                c.tvValue.text = fps.toString(); c.tvUnit.text = "FPS"
                 c.tvSub.text = if (low1 != null) "1% low: $low1 FPS" else ""
                 val col = when {
                     fps >= 60 -> Color.parseColor("#3FB950")
@@ -567,8 +712,7 @@ class MainActivity : AppCompatActivity() {
             val used = optNullableDouble(d, "ramUsedGb")
             val total = optNullableDouble(d, "ramTotalGb")
             if (pct != null) {
-                c.tvValue.text = pct.roundToInt().toString()
-                c.tvUnit.text = "%"
+                c.tvValue.text = pct.roundToInt().toString(); c.tvUnit.text = "%"
                 c.tvSub.text = if (used != null && total != null) "$used / $total ГБ" else ""
                 setCardData(c, loadColor(pct, accentColor), pct.roundToInt().coerceIn(0, 100), (pct / 100.0).toFloat())
             } else {
@@ -581,8 +725,7 @@ class MainActivity : AppCompatActivity() {
             val used = optNullableDouble(d, "gpuVramUsedGb")
             val total = optNullableDouble(d, "gpuVramTotalGb")
             if (used != null) {
-                c.tvValue.text = String.format("%.1f", used)
-                c.tvUnit.text = "ГБ"
+                c.tvValue.text = String.format("%.1f", used); c.tvUnit.text = "ГБ"
                 val pct = if (total != null && total > 0) ((used / total) * 100).roundToInt() else 0
                 c.tvSub.text = if (total != null) "из ${String.format("%.1f", total)} ГБ ($pct%)" else ""
                 setCardData(c, loadColor(pct.toDouble(), accentColor), pct.coerceIn(0, 100), pct / 100f)

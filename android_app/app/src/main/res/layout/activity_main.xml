@@ -123,169 +123,220 @@
             android:textSize="11sp" />
     </LinearLayout>
 
-    <!-- Swipe-Up Windows Media Player Overlay -->
-    <LinearLayout
+    <!-- NEXT-GEN SWIPE-UP WINDOWS MEDIA PLAYER -->
+    <FrameLayout
         android:id="@+id/mediaOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#F20B0F15"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:padding="18dp"
+        android:background="#090C10"
         android:visibility="gone">
 
-        <TextView
-            android:id="@+id/btnCloseMedia"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="@drawable/status_pill_bg"
-            android:paddingLeft="16dp"
-            android:paddingTop="5dp"
-            android:paddingRight="16dp"
-            android:paddingBottom="5dp"
-            android:text="⌄ Свайп вниз — вернуться"
-            android:textColor="#8B949E"
-            android:textSize="12sp" />
+        <ImageView
+            android:id="@+id/ivMediaBackdrop"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:alpha="0.82"
+            android:scaleType="centerCrop" />
+
+        <View
+            android:id="@+id/mediaScrim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/media_scrim" />
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:gravity="center"
-            android:orientation="horizontal">
+            android:layout_height="match_parent"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingLeft="24dp"
+            android:paddingTop="14dp"
+            android:paddingRight="24dp"
+            android:paddingBottom="16dp">
 
-            <ImageView
-                android:id="@+id/ivMediaArt"
-                android:layout_width="104dp"
-                android:layout_height="104dp"
-                android:layout_marginEnd="18dp"
-                android:background="@drawable/card_bg"
-                android:scaleType="centerCrop"
-                android:visibility="gone" />
+            <View
+                android:id="@+id/btnCloseMedia"
+                android:layout_width="48dp"
+                android:layout_height="5dp"
+                android:layout_marginBottom="14dp"
+                android:background="@drawable/glass_pill" />
 
             <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
                 android:layout_weight="1"
-                android:gravity="center_horizontal"
-                android:orientation="vertical">
+                android:gravity="center"
+                android:orientation="horizontal">
 
-                <TextView
-                    android:id="@+id/tvMediaStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Плеер Windows"
-                    android:textColor="#58A6FF"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
+                <ImageView
+                    android:id="@+id/ivMediaArt"
+                    android:layout_width="172dp"
+                    android:layout_height="172dp"
+                    android:layout_marginEnd="26dp"
+                    android:background="@drawable/card_bg"
+                    android:elevation="14dp"
+                    android:scaleType="centerCrop"
+                    android:visibility="gone" />
 
-                <TextView
-                    android:id="@+id/tvMediaTitle"
-                    android:layout_width="match_parent"
+                <LinearLayout
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:ellipsize="end"
-                    android:gravity="center"
-                    android:maxLines="2"
-                    android:text="Ничего не играет"
-                    android:textColor="#E6EDF3"
-                    android:textSize="22sp"
-                    android:textStyle="bold" />
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:orientation="vertical">
 
-                <TextView
-                    android:id="@+id/tvMediaArtist"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:ellipsize="end"
-                    android:gravity="center"
-                    android:maxLines="1"
-                    android:text=""
-                    android:textColor="#8B949E"
-                    android:textSize="14sp" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/tvMediaStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:letterSpacing="0.08"
+                            android:text="NOW PLAYING"
+                            android:textAllCaps="true"
+                            android:textColor="#58A6FF"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <com.pcmonitor.usb.AudioVisualizerView
+                            android:id="@+id/audioVisualizer"
+                            android:layout_width="110dp"
+                            android:layout_height="20dp"
+                            android:layout_marginStart="12dp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvMediaTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:ellipsize="end"
+                        android:maxLines="2"
+                        android:text="Ничего не играет"
+                        android:textColor="#FFFFFF"
+                        android:textSize="26sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvMediaArtist"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:text=""
+                        android:textColor="#B8C2CC"
+                        android:textSize="15sp" />
+
+                    <ProgressBar
+                        android:id="@+id/mediaProgress"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="5dp"
+                        android:layout_marginTop="14dp"
+                        android:max="1000"
+                        android:progress="0" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/tvMediaPos"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:fontFamily="monospace"
+                            android:text="0:00"
+                            android:textColor="#9AA6B2"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:id="@+id/tvMediaDur"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="monospace"
+                            android:text="0:00"
+                            android:textColor="#9AA6B2"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <ImageView
+                            android:id="@+id/btnPrev"
+                            android:layout_width="52dp"
+                            android:layout_height="52dp"
+                            android:layout_marginEnd="14dp"
+                            android:background="@drawable/glass_circle_btn"
+                            android:padding="12dp"
+                            android:src="@drawable/ic_prev" />
+
+                        <ImageView
+                            android:id="@+id/btnPlayPause"
+                            android:layout_width="66dp"
+                            android:layout_height="66dp"
+                            android:layout_marginEnd="14dp"
+                            android:background="@drawable/glass_circle_btn"
+                            android:elevation="8dp"
+                            android:padding="16dp"
+                            android:src="@drawable/ic_play" />
+
+                        <ImageView
+                            android:id="@+id/btnNext"
+                            android:layout_width="52dp"
+                            android:layout_height="52dp"
+                            android:layout_marginEnd="20dp"
+                            android:background="@drawable/glass_circle_btn"
+                            android:padding="12dp"
+                            android:src="@drawable/ic_next" />
+
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="44dp"
+                            android:background="@drawable/glass_pill"
+                            android:gravity="center"
+                            android:orientation="horizontal"
+                            android:paddingLeft="6dp"
+                            android:paddingRight="6dp">
+
+                            <ImageView
+                                android:id="@+id/btnVolDown"
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:padding="9dp"
+                                android:src="@drawable/ic_vol_down" />
+
+                            <ImageView
+                                android:id="@+id/btnVolMute"
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:padding="9dp"
+                                android:src="@drawable/ic_vol_mute" />
+
+                            <ImageView
+                                android:id="@+id/btnVolUp"
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:padding="9dp"
+                                android:src="@drawable/ic_vol_up" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:gravity="center"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/btnPrev"
-                android:layout_width="72dp"
-                android:layout_height="58dp"
-                android:layout_marginEnd="14dp"
-                android:background="@drawable/card_bg"
-                android:gravity="center"
-                android:text="⏮"
-                android:textColor="#E6EDF3"
-                android:textSize="26sp" />
-
-            <TextView
-                android:id="@+id/btnPlayPause"
-                android:layout_width="90dp"
-                android:layout_height="66dp"
-                android:layout_marginEnd="14dp"
-                android:background="@drawable/card_bg"
-                android:gravity="center"
-                android:text="⏯"
-                android:textColor="#58A6FF"
-                android:textSize="32sp" />
-
-            <TextView
-                android:id="@+id/btnNext"
-                android:layout_width="72dp"
-                android:layout_height="58dp"
-                android:background="@drawable/card_bg"
-                android:gravity="center"
-                android:text="⏭"
-                android:textColor="#E6EDF3"
-                android:textSize="26sp" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:gravity="center"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/btnVolDown"
-                android:layout_width="68dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="10dp"
-                android:background="@drawable/status_pill_bg"
-                android:gravity="center"
-                android:text="🔉 −"
-                android:textColor="#C9D1D9"
-                android:textSize="14sp" />
-
-            <TextView
-                android:id="@+id/btnVolMute"
-                android:layout_width="54dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="10dp"
-                android:background="@drawable/status_pill_bg"
-                android:gravity="center"
-                android:text="🔇"
-                android:textColor="#C9D1D9"
-                android:textSize="15sp" />
-
-            <TextView
-                android:id="@+id/btnVolUp"
-                android:layout_width="68dp"
-                android:layout_height="40dp"
-                android:background="@drawable/status_pill_bg"
-                android:gravity="center"
-                android:text="🔊 +"
-                android:textColor="#C9D1D9"
-                android:textSize="14sp" />
-        </LinearLayout>
-    </LinearLayout>
+    </FrameLayout>
 
     <!-- Swipe-Left Stream Deck Macro Panel -->
     <LinearLayout
