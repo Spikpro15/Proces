@@ -366,7 +366,7 @@ class MainActivity : AppCompatActivity() {
             val accent = parseColorSafe(b.colorHex, th.accent)
             val view = when (b.type) {
                 "clock_weather" -> inflater.inflate(R.layout.block_clock_weather, metricsGrid, false)
-                                "oc_controls" -> {
+                "oc_controls" -> {
                     val v = inflater.inflate(R.layout.block_oc_controls, metricsGrid, false)
                     fun wireOc(id: Int, prof: String) {
                         v.findViewById<View>(id).setOnClickListener { btn ->
@@ -382,24 +382,6 @@ class MainActivity : AppCompatActivity() {
                     wireOc(R.id.btnOcStandard, "standard")
                     wireOc(R.id.btnOcExtreme, "extreme")
                     v
-                }
-                                "oc_controls" -> {
-                    val prof = d.optString("ocProfile", "stock")
-                    val status = d.optString("ocStatus", "Сток (0 / 0 МГц)")
-                    v.findViewById<TextView>(R.id.tvOcStatus)?.text = status
-                    fun styleBtn(id: Int, active: Boolean, colHex: String) {
-                        val tv = v.findViewById<TextView>(id) ?: return
-                        val col = Color.parseColor(colHex)
-                        tv.background = GradientDrawable().apply {
-                            cornerRadius = 22f
-                            setColor(if (active) Color.argb(90, Color.red(col), Color.green(col), Color.blue(col)) else Color.parseColor("#18202C"))
-                            setStroke(if (active) 3 else 1, if (active) col else Color.parseColor("#30363D"))
-                        }
-                    }
-                    styleBtn(R.id.btnOcStock, prof == "stock", "#94A3B8")
-                    styleBtn(R.id.btnOcMild, prof == "mild", "#38BDF8")
-                    styleBtn(R.id.btnOcStandard, prof == "standard", "#F59E0B")
-                    styleBtn(R.id.btnOcExtreme, prof == "extreme", "#F85149")
                 }
                 "media_player" -> {
                     val v = inflater.inflate(R.layout.block_media_player, metricsGrid, false)
@@ -972,6 +954,24 @@ class MainActivity : AppCompatActivity() {
                         val fl = if (wObj.isNull("feelsLikeC")) "?" else "${wObj.optDouble("feelsLikeC").roundToInt()}°"
                         v.findViewById<TextView>(R.id.tvWeatherSub)?.text = "↑$mx ↓$mn · Ощущается как $fl"
                     }
+                }
+                "oc_controls" -> {
+                    val prof = d.optString("ocProfile", "stock")
+                    val status = d.optString("ocStatus", "Сток (0 / 0 МГц)")
+                    v.findViewById<TextView>(R.id.tvOcStatus)?.text = status
+                    fun styleBtn(id: Int, active: Boolean, colHex: String) {
+                        val tv = v.findViewById<TextView>(id) ?: return
+                        val col = Color.parseColor(colHex)
+                        tv.background = GradientDrawable().apply {
+                            cornerRadius = 22f
+                            setColor(if (active) Color.argb(90, Color.red(col), Color.green(col), Color.blue(col)) else Color.parseColor("#18202C"))
+                            setStroke(if (active) 3 else 1, if (active) col else Color.parseColor("#30363D"))
+                        }
+                    }
+                    styleBtn(R.id.btnOcStock, prof == "stock", "#94A3B8")
+                    styleBtn(R.id.btnOcMild, prof == "mild", "#38BDF8")
+                    styleBtn(R.id.btnOcStandard, prof == "standard", "#F59E0B")
+                    styleBtn(R.id.btnOcExtreme, prof == "extreme", "#F85149")
                 }
                 "media_player" -> {
                     v.findViewById<TextView>(R.id.tvBlkMediaTitle)?.text = if (mTitle.isNotEmpty()) mTitle else "Ничего не играет"
