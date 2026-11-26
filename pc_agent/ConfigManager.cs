@@ -93,6 +93,36 @@ public class ConfigManager
         ConfigChanged?.Invoke(updated);
     }
 
+
+    public string ApplyPreset(string requested)
+    {
+        var order = new[] { "tiktok", "gamer", "streamer", "oc" };
+        AppConfig updated;
+        string chosen;
+        lock (_lock)
+        {
+            if (requested == "next")
+            {
+                int idx = Array.IndexOf(order, _config.ActivePreset);
+                chosen = order[(idx + 1) % order.Length];
+            }
+            else
+            {
+                chosen = order.Contains(requested) ? requested : "tiktok";
+            }
+
+            var (cols, rows, blocks) = AppConfig.GetPreset(chosen);
+            _config.LayoutCols = cols;
+            _config.LayoutRows = rows;
+            _config.LayoutBlocks = blocks;
+            _config.ActivePreset = chosen;
+            SaveInternal(_config);
+            updated = _config;
+        }
+        ConfigChanged?.Invoke(updated);
+        return chosen;
+    }
+
     private void SaveInternal(AppConfig cfg)
     {
         try { File.WriteAllText(_path, JsonSerializer.Serialize(cfg, JsonOpts)); } catch { }

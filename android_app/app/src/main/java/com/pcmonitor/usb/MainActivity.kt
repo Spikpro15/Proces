@@ -1,6 +1,8 @@
 package com.pcmonitor.usb
 
+import android.app.AlertDialog
 import android.content.Intent
+import android.app.AlertDialog
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
@@ -58,6 +60,8 @@ class MainActivity : AppCompatActivity() {
     private val obsUrl = "http://127.0.0.1:8765/api/obs"
     private val wallpaperUrl = "http://127.0.0.1:8765/api/wallpaper"
     private val updateApkUrl = "http://127.0.0.1:8765/api/update-apk"
+    private val presetUrl = "http://127.0.0.1:8765/api/preset"
+    private val ocUrl = "http://127.0.0.1:8765/api/oc"
 
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -129,6 +133,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var tvGameName: TextView
     private lateinit var btnUpdateApp: TextView
+    private lateinit var btnPreset: TextView
     private lateinit var metricsGrid: GridLayout
     private lateinit var tvMiniMedia: TextView
     private lateinit var standbyOverlay: View
@@ -201,6 +206,7 @@ class MainActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tvStatus)
         tvGameName = findViewById(R.id.tvGameName)
         btnUpdateApp = findViewById(R.id.btnUpdateApp)
+        btnPreset = findViewById(R.id.btnPreset)
         metricsGrid = findViewById(R.id.metricsGrid)
         tvMiniMedia = findViewById(R.id.tvMiniMedia)
         standbyOverlay = findViewById(R.id.standbyOverlay)
@@ -245,6 +251,21 @@ class MainActivity : AppCompatActivity() {
         tvMiniMedia.setOnClickListener { showMediaOverlay(true) }
         findViewById<View>(R.id.btnCloseMedia).setOnClickListener { showMediaOverlay(false) }
         btnUpdateApp.setOnClickListener { triggerUsbSelfUpdate() }
+        btnPreset.setOnClickListener { v ->
+            v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            sendPost(presetUrl, JSONObject().put("preset", "next"))
+        }
+        btnPreset.setOnLongClickListener {
+            val names = arrayOf("✨ Главный (4×3)", "🎮 Игровой (3×2)", "📺 Стример (5×3)", "🔥 Разгон (4×3)")
+            val ids = arrayOf("tiktok", "gamer", "streamer", "oc")
+            AlertDialog.Builder(this)
+                .setTitle("Выбери режим экрана")
+                .setItems(names) { _, which ->
+                    sendPost(presetUrl, JSONObject().put("preset", ids[which]))
+                }
+                .show()
+            true
+        }
 
         btnObsStream.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -345,6 +366,41 @@ class MainActivity : AppCompatActivity() {
             val accent = parseColorSafe(b.colorHex, th.accent)
             val view = when (b.type) {
                 "clock_weather" -> inflater.inflate(R.layout.block_clock_weather, metricsGrid, false)
+                                "oc_controls" -> {
+                    val v = inflater.inflate(R.layout.block_oc_controls, metricsGrid, false)
+                    fun wireOc(id: Int, prof: String) {
+                        v.findViewById<View>(id).setOnClickListener { btn ->
+                            btn.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                            btn.animate().scaleX(0.92f).scaleY(0.92f).setDuration(70).withEndAction {
+                                btn.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                            }.start()
+                            sendPost(ocUrl, JSONObject().put("profile", prof))
+                        }
+                    }
+                    wireOc(R.id.btnOcStock, "stock")
+                    wireOc(R.id.btnOcMild, "mild")
+                    wireOc(R.id.btnOcStandard, "standard")
+                    wireOc(R.id.btnOcExtreme, "extreme")
+                    v
+                }
+                                "oc_controls" -> {
+                    val prof = d.optString("ocProfile", "stock")
+                    val status = d.optString("ocStatus", "Сток (0 / 0 МГц)")
+                    v.findViewById<TextView>(R.id.tvOcStatus)?.text = status
+                    fun styleBtn(id: Int, active: Boolean, colHex: String) {
+                        val tv = v.findViewById<TextView>(id) ?: return
+                        val col = Color.parseColor(colHex)
+                        tv.background = GradientDrawable().apply {
+                            cornerRadius = 22f
+                            setColor(if (active) Color.argb(90, Color.red(col), Color.green(col), Color.blue(col)) else Color.parseColor("#18202C"))
+                            setStroke(if (active) 3 else 1, if (active) col else Color.parseColor("#30363D"))
+                        }
+                    }
+                    styleBtn(R.id.btnOcStock, prof == "stock", "#94A3B8")
+                    styleBtn(R.id.btnOcMild, prof == "mild", "#38BDF8")
+                    styleBtn(R.id.btnOcStandard, prof == "standard", "#F59E0B")
+                    styleBtn(R.id.btnOcExtreme, prof == "extreme", "#F85149")
+                }
                 "media_player" -> {
                     val v = inflater.inflate(R.layout.block_media_player, metricsGrid, false)
                     val art = v.findViewById<ImageView>(R.id.ivBlkArt)
@@ -399,7 +455,7 @@ class MainActivity : AppCompatActivity() {
             val v = blockViews[b.id] ?: return@forEach
             val accent = parseColorSafe(b.colorHex, th.accent)
             if (b.type != "clock_weather") v.background = makeGlassBlockBg(accent)
-            if (b.type != "clock_weather" && b.type != "media_player") {
+            if (b.type != "clock_weather" && b.type != "media_player" && b.type != "oc_controls") {
                 v.findViewById<TextView>(R.id.tvBlkVal)?.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f * currentFontScale)
             }
         }
@@ -787,6 +843,12 @@ class MainActivity : AppCompatActivity() {
     private fun updateUi(d: JSONObject) {
         alertPulseToggle = !alertPulseToggle
         btnUpdateApp.visibility = if (d.optBoolean("pcApkAvailable", false)) View.VISIBLE else View.GONE
+        btnPreset.text = when (d.optString("activePreset", "tiktok")) {
+            "gamer" -> "🎮 Игра"
+            "streamer" -> "📺 Стрим"
+            "oc" -> "🔥 Разгон"
+            else -> "✨ Главный"
+        }
 
         val wpVer = d.optInt("wallpaperVersion", 0)
         if (wpVer != lastWallpaperVersion) {

@@ -32,6 +32,7 @@ public class AppConfig
     [JsonPropertyName("obsPassword")] public string ObsPassword { get; set; } = "";
     [JsonPropertyName("layoutCols")] public int LayoutCols { get; set; } = 4;
     [JsonPropertyName("layoutRows")] public int LayoutRows { get; set; } = 3;
+    [JsonPropertyName("activePreset")] public string ActivePreset { get; set; } = "tiktok";
 
     [JsonPropertyName("layoutBlocks")]
     public List<LayoutBlock> LayoutBlocks { get; set; } = DefaultTikTokLayout();
@@ -63,6 +64,51 @@ public class AppConfig
         new() { Id = "b6", Type = "fps",           X = 3, Y = 2, W = 1, H = 1, Color = "#F59E0B" }
     };
 
+
+    public static (int Cols, int Rows, List<LayoutBlock> Blocks) GetPreset(string name) => name switch
+    {
+                "oc" => (4, 3, new List<LayoutBlock>
+        {
+            new() { Id = "o1", Type = "oc_controls", X = 0, Y = 0, W = 2, H = 2, Color = "#F97316" },
+            new() { Id = "o2", Type = "gpu_clock",   X = 2, Y = 0, W = 1, H = 1, Color = "#38BDF8" },
+            new() { Id = "o3", Type = "gpu_temp",    X = 3, Y = 0, W = 1, H = 1, Color = "#EF4444" },
+            new() { Id = "o4", Type = "gpu_power",   X = 2, Y = 1, W = 1, H = 1, Color = "#A855F7" },
+            new() { Id = "o5", Type = "gpu_vram",    X = 3, Y = 1, W = 1, H = 1, Color = "#C084FC" },
+            new() { Id = "o6", Type = "fps",         X = 0, Y = 2, W = 2, H = 1, Color = "#22C55E" },
+            new() { Id = "o7", Type = "gpu",         X = 2, Y = 2, W = 1, H = 1, Color = "#84CC16" },
+            new() { Id = "o8", Type = "cpu_temp",    X = 3, Y = 2, W = 1, H = 1, Color = "#F59E0B" }
+        }),
+        "gamer" => (3, 2, new List<LayoutBlock>
+        {
+            new() { Id = "g1", Type = "fps",      X = 0, Y = 0, W = 1, H = 1, Color = "#22C55E" },
+            new() { Id = "g2", Type = "cpu",      X = 1, Y = 0, W = 1, H = 1, Color = "#22D3EE" },
+            new() { Id = "g3", Type = "cpu_temp", X = 2, Y = 0, W = 1, H = 1, Color = "#F43F5E" },
+            new() { Id = "g4", Type = "gpu",      X = 0, Y = 1, W = 1, H = 1, Color = "#84CC16" },
+            new() { Id = "g5", Type = "gpu_temp", X = 1, Y = 1, W = 1, H = 1, Color = "#10B981" },
+            new() { Id = "g6", Type = "ram",      X = 2, Y = 1, W = 1, H = 1, Color = "#A78BFA" }
+        }),
+        "streamer" => (5, 3, new List<LayoutBlock>
+        {
+            new() { Id = "s1", Type = "clock_weather", X = 0, Y = 0, W = 2, H = 2, Color = "#38BDF8" },
+            new() { Id = "s2", Type = "media_player",  X = 2, Y = 0, W = 2, H = 2, Color = "#38BDF8" },
+            new() { Id = "s3", Type = "obs_live",      X = 4, Y = 0, W = 1, H = 2, Color = "#EF4444" },
+            new() { Id = "s4", Type = "fps",           X = 0, Y = 2, W = 1, H = 1, Color = "#22C55E" },
+            new() { Id = "s5", Type = "cpu",           X = 1, Y = 2, W = 1, H = 1, Color = "#22D3EE" },
+            new() { Id = "s6", Type = "gpu",           X = 2, Y = 2, W = 1, H = 1, Color = "#84CC16" },
+            new() { Id = "s7", Type = "ram",           X = 3, Y = 2, W = 1, H = 1, Color = "#A78BFA" },
+            new() { Id = "s8", Type = "network",       X = 4, Y = 2, W = 1, H = 1, Color = "#FB923C" }
+        }),
+        _ => (4, 3, new List<LayoutBlock>
+        {
+            new() { Id = "p1", Type = "clock_weather", X = 0, Y = 0, W = 2, H = 2, Color = "#38BDF8" },
+            new() { Id = "p2", Type = "media_player",  X = 2, Y = 0, W = 2, H = 2, Color = "#38BDF8" },
+            new() { Id = "p3", Type = "cpu",           X = 0, Y = 2, W = 1, H = 1, Color = "#22D3EE" },
+            new() { Id = "p4", Type = "gpu",           X = 1, Y = 2, W = 1, H = 1, Color = "#84CC16" },
+            new() { Id = "p5", Type = "ram",           X = 2, Y = 2, W = 1, H = 1, Color = "#A78BFA" },
+            new() { Id = "p6", Type = "network",       X = 3, Y = 2, W = 1, H = 1, Color = "#FB923C" }
+        })
+    };
+
     public static readonly List<MetricDefinition> AllBlockTypes = new()
     {
         new("clock_weather", "Часы + Погода", "", "Крупные часы, дата, погода и статус ПК/батареи"),
@@ -79,7 +125,8 @@ public class AppConfig
         new("gpu_power", "Питание GPU", "Вт", "Потребление видеокарты в ваттах"),
         new("cpu_clock", "Частота CPU", "МГц", "Частота ядер процессора"),
         new("gpu_clock", "Частота GPU", "МГц", "Частота ядра видеокарты"),
-        new("obs_live", "OBS Статус", "", "Статус эфира/записи и текущая сцена OBS")
+        new("obs_live", "OBS Статус", "", "Статус эфира/записи и текущая сцена OBS"),
+        new("oc_controls", "🔥 Разгон GPU", "", "Кнопки разгона NVIDIA (Сток / Мягкий / Стандарт / Экстрим)")
     };
 }
 
@@ -139,6 +186,12 @@ public class TelemetryPayload
     [JsonPropertyName("mediaPosSec")] public double? MediaPosSec { get; set; }
     [JsonPropertyName("mediaDurSec")] public double? MediaDurSec { get; set; }
 
+        [JsonPropertyName("ocSupported")] public bool OcSupported { get; set; }
+    [JsonPropertyName("ocProfile")] public string OcProfile { get; set; } = "stock";
+    [JsonPropertyName("ocCoreMhz")] public int OcCoreMhz { get; set; }
+    [JsonPropertyName("ocMemMhz")] public int OcMemMhz { get; set; }
+    [JsonPropertyName("ocStatus")] public string OcStatus { get; set; } = "";
+
     [JsonPropertyName("obsConnected")] public bool ObsConnected { get; set; }
     [JsonPropertyName("obsStreaming")] public bool ObsStreaming { get; set; }
     [JsonPropertyName("obsRecording")] public bool ObsRecording { get; set; }
@@ -154,6 +207,7 @@ public class TelemetryPayload
 
     [JsonPropertyName("layoutCols")] public int LayoutCols { get; set; } = 4;
     [JsonPropertyName("layoutRows")] public int LayoutRows { get; set; } = 3;
+    [JsonPropertyName("activePreset")] public string ActivePreset { get; set; } = "tiktok";
     [JsonPropertyName("layoutBlocks")] public List<LayoutBlock> LayoutBlocks { get; set; } = new();
     [JsonPropertyName("macros")] public List<MacroButton> Macros { get; set; } = new();
 }

@@ -23,7 +23,8 @@ static class Program
         var media = new MediaController();
         using var weather = new WeatherService(config);
         using var obs = new ObsController(config);
-        using var server = new TelemetryServer(port, config, sessions, media, adb, obs, baseDir);
+        var gpuOc = new GpuOverclockController();
+        using var server = new TelemetryServer(port, config, sessions, media, adb, obs, gpuOc, baseDir);
 
         fps.Start();
         adb.Start();
@@ -58,11 +59,22 @@ static class Program
                     FontScale = cfg.FontScale,
                     LayoutCols = cfg.LayoutCols,
                     LayoutRows = cfg.LayoutRows,
+                    ActivePreset = cfg.ActivePreset,
                     LayoutBlocks = cfg.LayoutBlocks,
                     Macros = cfg.Macros
                 };
 
                 try { hw?.ReadInto(payload); } catch { }
+                try
+                {
+                    gpuOc.CheckThermalGuard(payload.GpuTemp);
+                    payload.OcSupported = gpuOc.IsSupported;
+                    payload.OcProfile = gpuOc.ActiveProfile;
+                    payload.OcCoreMhz = gpuOc.CoreOffsetMhz;
+                    payload.OcMemMhz = gpuOc.MemOffsetMhz;
+                    payload.OcStatus = gpuOc.StatusText;
+                }
+                catch { }
 
                 int? activePid = null;
                 try

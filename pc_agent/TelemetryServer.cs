@@ -14,6 +14,7 @@ public sealed class TelemetryServer : IDisposable
     private readonly MediaController _media;
     private readonly AdbBridge _adb;
     private readonly ObsController _obs;
+    private readonly GpuOverclockController _gpuOc;
     private readonly string _apkPath;
     private readonly string _wallpaperPath;
     private readonly ConcurrentDictionary<Guid, WebSocket> _sockets = new();
@@ -23,13 +24,14 @@ public sealed class TelemetryServer : IDisposable
 
     public int WallpaperVersion => File.Exists(_wallpaperPath) ? Math.Max(1, _wallpaperVersion) : 0;
 
-    public TelemetryServer(int port, ConfigManager config, SessionAnalyzer sessions, MediaController media, AdbBridge adb, ObsController obs, string baseDir)
+    public TelemetryServer(int port, ConfigManager config, SessionAnalyzer sessions, MediaController media, AdbBridge adb, ObsController obs, GpuOverclockController gpuOc, string baseDir)
     {
         _config = config;
         _sessions = sessions;
         _media = media;
         _adb = adb;
         _obs = obs;
+        _gpuOc = gpuOc;
         _apkPath = Path.Combine(baseDir, "PCMonitor-Android.apk");
         _wallpaperPath = Path.Combine(baseDir, "wallpaper.img");
         if (File.Exists(_wallpaperPath)) _wallpaperVersion = 1;
@@ -85,6 +87,38 @@ public sealed class TelemetryServer : IDisposable
 
         if (path == "/ws" && req.IsWebSocketRequest) { await HandleWebSocketAsync(ctx, ct); return; }
         if (path == "/api/metrics" && req.HttpMethod == "GET") { await WriteJsonAsync(res, _latestJson); return; }
+
+
+
+        if (path == "/api/oc" && req.HttpMethod == "POST")
+        {
+            using var reader = new StreamReader(req.InputStream, Encoding.UTF8);
+            var body = await reader.ReadToEndAsync(ct);
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var profile = doc.RootElement.TryGetProperty("profile", out var p) ? p.GetString() ?? "stock" : "stock";
+                var (ok, msg) = _gpuOc.ApplyProfile(profile);
+                await WriteJsonAsync(res, JsonSerializer.Serialize(new { ok, message = msg, profile = _gpuOc.ActiveProfile }));
+            }
+            catch { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
+            return;
+        }
+
+        if (path == "/api/preset" && req.HttpMethod == "POST")
+        {
+            using var reader = new StreamReader(req.InputStream, Encoding.UTF8);
+            var body = await reader.ReadToEndAsync(ct);
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var preset = doc.RootElement.TryGetProperty("preset", out var p) ? p.GetString() ?? "next" : "next";
+                var active = _config.ApplyPreset(preset);
+                await WriteJsonAsync(res, JsonSerializer.Serialize(new { ok = true, activePreset = active }));
+            }
+            catch { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
+            return;
+        }
 
         if (path == "/api/update-apk" && req.HttpMethod == "POST")
         {
@@ -367,10 +401,10 @@ public sealed class TelemetryServer : IDisposable
     background-size:cover; background-position:center;
     border:5px solid #2b3442; border-radius:30px; padding:14px;
     box-shadow:0 20px 50px rgba(0,0,0,0.65);
-    width:820px; height:400px; display:flex; flex-direction:column; position:relative;
+    width:820px; height:430px; overflow:hidden; display:flex; flex-direction:column; position:relative;
   }
   .bentoCanvas {
-    flex:1; display:grid; gap:10px; position:relative;
+    flex:1; min-height:0; height:100%; display:grid; gap:10px; position:relative;
   }
   .cellSlot {
     border:1px dashed rgba(148,163,184,0.22); border-radius:16px;
@@ -380,7 +414,7 @@ public sealed class TelemetryServer : IDisposable
   .cellSlot:hover, .cellSlot.over { border-color:#38bdf8; background:rgba(56,189,248,0.12); color:#38bdf8; }
   .bentoBlock {
     background:rgba(15,23,36,0.72); border:1px solid rgba(255,255,255,0.12);
-    border-radius:18px; padding:12px 14px; position:relative; overflow:hidden;
+    border-radius:18px; padding:10px 12px; position:relative; overflow:hidden; min-width:0; min-height:0;
     display:flex; flex-direction:column; justify-content:space-between;
     cursor:grab; user-select:none; backdrop-filter:blur(10px);
     transition:transform .12s, box-shadow .12s, border-color .12s;
@@ -401,7 +435,7 @@ public sealed class TelemetryServer : IDisposable
   .bLbl { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; }
   .bVal { font-family:ui-monospace,Consolas,monospace; font-size:28px; font-weight:800; color:#fff; line-height:1.1; }
   .bSub { font-size:11px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .clockBig { font-size:52px; font-weight:300; letter-spacing:-2px; line-height:1; color:#fff; }
+  .clockBig { font-size:clamp(24px, 3.6vw, 44px); font-weight:300; letter-spacing:-1.5px; line-height:1; color:#fff; }
   .clockSec { font-size:18px; color:#94a3b8; vertical-align:top; margin-left:4px; }
   .spark { width:100%; height:26px; display:block; margin-top:4px; }
 
@@ -434,6 +468,7 @@ public sealed class TelemetryServer : IDisposable
     <button class="btn" onclick="applyPreset('tiktok')">✨ Стиль TikTok (4×3)</button>
     <button class="btn" onclick="applyPreset('gamer')">🎮 Игровой (3×2)</button>
     <button class="btn" onclick="applyPreset('streamer')">📺 Стример (5×3)</button>
+    <button class="btn" onclick="applyPreset('oc')">🔥 Разгон (4×3)</button>
     <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
       <strong>Сетка:</strong>
       <button class="btn" id="g_4x3" onclick="setGrid(4,3)">4×3</button>
@@ -513,7 +548,7 @@ const DEFAULT_COLORS = {
   clock_weather:'#38BDF8', media_player:'#38BDF8', fps:'#F59E0B', cpu:'#22D3EE',
   gpu:'#84CC16', ram:'#A78BFA', network:'#FB923C', cpu_temp:'#F43F5E',
   gpu_temp:'#10B981', gpu_vram:'#C084FC', cpu_power:'#60A5FA', gpu_power:'#E879F9',
-  cpu_clock:'#38BDF8', gpu_clock:'#A855F7', obs_live:'#EF4444'
+  cpu_clock:'#38BDF8', gpu_clock:'#A855F7', obs_live:'#EF4444', oc_controls:'#F97316'
 };
 
 let layoutCols = 4, layoutRows = 3, layoutBlocks = [], allBlockTypes = [], macros = [], latestData = {};
@@ -566,8 +601,8 @@ function renderPalette() {
 }
 
 function addBlock(type) {
-  const prefW = (type === 'clock_weather' || type === 'media_player') ? 2 : 1;
-  const prefH = (type === 'clock_weather' || type === 'media_player') ? 2 : 1;
+  const prefW = (type === 'clock_weather' || type === 'media_player' || type === 'oc_controls') ? 2 : 1;
+  const prefH = (type === 'clock_weather' || type === 'media_player' || type === 'oc_controls') ? 2 : 1;
   let spot = findFreeSpot(prefW, prefH);
   let w = prefW, h = prefH;
   if (!spot) { spot = findFreeSpot(1, 1); w = 1; h = 1; }
@@ -632,6 +667,18 @@ function applyPreset(name) {
       { id:'g5', type:'gpu_temp', x:1, y:1, w:1, h:1, color:'#10B981' },
       { id:'g6', type:'ram',      x:2, y:1, w:1, h:1, color:'#A78BFA' }
     ];
+  } else if (name === 'oc') {
+    layoutCols = 4; layoutRows = 3;
+    layoutBlocks = [
+      { id:'o1', type:'oc_controls', x:0, y:0, w:2, h:2, color:'#F97316' },
+      { id:'o2', type:'gpu_clock',   x:2, y:0, w:1, h:1, color:'#38BDF8' },
+      { id:'o3', type:'gpu_temp',    x:3, y:0, w:1, h:1, color:'#EF4444' },
+      { id:'o4', type:'gpu_power',   x:2, y:1, w:1, h:1, color:'#A855F7' },
+      { id:'o5', type:'gpu_vram',    x:3, y:1, w:1, h:1, color:'#C084FC' },
+      { id:'o6', type:'fps',         x:0, y:2, w:2, h:1, color:'#22C55E' },
+      { id:'o7', type:'gpu',         x:2, y:2, w:1, h:1, color:'#84CC16' },
+      { id:'o8', type:'cpu_temp',    x:3, y:2, w:1, h:1, color:'#F59E0B' }
+    ];
   } else if (name === 'streamer') {
     layoutCols = 5; layoutRows = 3;
     layoutBlocks = [
@@ -650,8 +697,8 @@ function applyPreset(name) {
 
 function renderCanvas() {
   const cv = document.getElementById('bentoCanvas');
-  cv.style.gridTemplateColumns = `repeat(${layoutCols}, 1fr)`;
-  cv.style.gridTemplateRows = `repeat(${layoutRows}, 1fr)`;
+  cv.style.gridTemplateColumns = `repeat(${layoutCols}, minmax(0, 1fr))`;
+  cv.style.gridTemplateRows = `repeat(${layoutRows}, minmax(0, 1fr))`;
 
   for (const g of ['4x3','5x3','3x2','4x4']) {
     const el = document.getElementById('g_' + g);
@@ -764,6 +811,17 @@ function updateValues() {
         <div><span class="clockBig">${hhmm}</span><span class="clockSec">${ss}</span></div>
         <div class="bSub">${dateStr}</div>
         <div style="font-size:13px;margin-top:4px">${wLine}</div>`;
+    } else if (b.type === 'oc_controls') {
+      const p = d.ocProfile || 'stock';
+      el.innerHTML = `
+        <div class="bLbl" style="color:${b.color}">🔥 РАЗГОН GPU (NVAPI)</div>
+        <div class="bSub">${d.ocStatus || 'Сток (0 / 0 МГц)'} · 🛡 Автосброс 84°C</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+          <button class="btn ${p==='stock'?'btnOn':''}" onclick="event.stopPropagation();ocCmd('stock')">Сток</button>
+          <button class="btn ${p==='mild'?'btnOn':''}" onclick="event.stopPropagation();ocCmd('mild')">Мягкий +5%</button>
+          <button class="btn ${p==='standard'?'btnOn':''}" onclick="event.stopPropagation();ocCmd('standard')">Стандарт +10%</button>
+          <button class="btn ${p==='extreme'?'btnOn':''}" onclick="event.stopPropagation();ocCmd('extreme')">Экстрим +20%</button>
+        </div>`;
     } else if (b.type === 'media_player') {
       const title = d.mediaTitle || 'Ничего не играет';
       const artist = d.mediaArtist || 'Включи музыку на ПК';
@@ -814,6 +872,7 @@ function updateStandbyBtn() { const b = document.getElementById('standbyBtn'); b
 async function toggleStandby() { standbyMode = standbyMode === 'auto' ? 'off' : 'auto'; updateStandbyBtn(); await saveConfig(); }
 async function uploadBg(input) { if (!input.files || !input.files[0]) return; await fetch('/api/wallpaper', { method:'POST', body: input.files[0] }); input.value=''; setTimeout(poll, 250); }
 async function clearBg() { await fetch('/api/wallpaper', { method:'DELETE' }); setTimeout(poll, 250); }
+async function ocCmd(profile) { await fetch('/api/oc', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ profile }) }); setTimeout(poll, 250); }
 async function mediaCmd(action) { await fetch('/api/media', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action }) }); setTimeout(poll, 250); }
 
 function renderMacros() {
