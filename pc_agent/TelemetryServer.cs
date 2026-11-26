@@ -244,14 +244,17 @@ public sealed class TelemetryServer : IDisposable
             var cfg = _config.Current;
             var obj = new
             {
-                enabledMetrics = cfg.EnabledMetrics,
+                layoutCols = cfg.LayoutCols,
+                layoutRows = cfg.LayoutRows,
+                layoutBlocks = cfg.LayoutBlocks,
                 theme = cfg.Theme,
                 fontScale = cfg.FontScale,
                 standbyMode = cfg.StandbyMode,
+                weatherCity = cfg.WeatherCity,
                 obsPort = cfg.ObsPort,
                 obsPassword = cfg.ObsPassword,
                 macros = cfg.Macros,
-                allMetrics = AppConfig.AllMetrics
+                allBlockTypes = AppConfig.AllBlockTypes
             };
             await WriteJsonAsync(res, JsonSerializer.Serialize(obj));
             return;
@@ -266,13 +269,16 @@ public sealed class TelemetryServer : IDisposable
                 using var doc = JsonDocument.Parse(body);
                 var root = doc.RootElement;
 
-                List<string>? metrics = null;
-                if (root.TryGetProperty("enabledMetrics", out var arr) && arr.ValueKind == JsonValueKind.Array)
-                    metrics = arr.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
+                List<LayoutBlock>? blocks = null;
+                if (root.TryGetProperty("layoutBlocks", out var lb) && lb.ValueKind == JsonValueKind.Array)
+                    blocks = JsonSerializer.Deserialize<List<LayoutBlock>>(lb.GetRawText());
 
+                int? cols = root.TryGetProperty("layoutCols", out var lc) && lc.ValueKind == JsonValueKind.Number ? lc.GetInt32() : null;
+                int? rows = root.TryGetProperty("layoutRows", out var lr) && lr.ValueKind == JsonValueKind.Number ? lr.GetInt32() : null;
                 string? theme = root.TryGetProperty("theme", out var th) ? th.GetString() : null;
                 double? fontScale = root.TryGetProperty("fontScale", out var fs) && fs.ValueKind == JsonValueKind.Number ? fs.GetDouble() : null;
                 string? standby = root.TryGetProperty("standbyMode", out var sb) ? sb.GetString() : null;
+                string? city = root.TryGetProperty("weatherCity", out var wc) ? wc.GetString() : null;
                 int? obsPort = root.TryGetProperty("obsPort", out var op) && op.ValueKind == JsonValueKind.Number ? op.GetInt32() : null;
                 string? obsPass = root.TryGetProperty("obsPassword", out var opw) ? opw.GetString() : null;
 
@@ -280,7 +286,7 @@ public sealed class TelemetryServer : IDisposable
                 if (root.TryGetProperty("macros", out var mc) && mc.ValueKind == JsonValueKind.Array)
                     macros = JsonSerializer.Deserialize<List<MacroButton>>(mc.GetRawText());
 
-                _config.UpdateConfig(metrics, theme, fontScale, macros, standby, obsPort, obsPass);
+                _config.UpdateConfig(blocks, cols, rows, theme, fontScale, macros, standby, city, obsPort, obsPass);
                 await WriteJsonAsync(res, "{\"ok\":true}");
             }
             catch { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
@@ -339,100 +345,122 @@ public sealed class TelemetryServer : IDisposable
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PC Monitor USB — Студия экрана v8</title>
+<title>PC Monitor USB v9 — Bento-студия экрана</title>
 <style>
   * { box-sizing: border-box; }
-  body { background:#0b0f14; color:#e6edf3; font-family:system-ui,-apple-system,sans-serif; margin:0; padding:22px; max-width:980px; margin:auto; }
+  body { background:#090d14; color:#e6edf3; font-family:system-ui,-apple-system,sans-serif; margin:0; padding:22px; max-width:1060px; margin:auto; }
   h1 { font-size:22px; margin:0 0 6px; }
   h2 { font-size:15px; margin:20px 0 10px; color:#c9d1d9; }
   .sub { color:#8b949e; margin-bottom:16px; font-size:13px; }
   .topBar { display:flex; gap:9px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
   .pill { background:#161b22; border:1px solid #30363d; padding:7px 13px; border-radius:999px; font-size:13px; }
   .ok { color:#3fb950; } .warn { color:#d29922; }
-  .btn { background:#21262d; color:#e6edf3; border:1px solid #30363d; border-radius:8px; padding:7px 13px; cursor:pointer; font-size:13px; font-weight:600; }
-  .btn:hover { background:#30363d; }
+  .btn { background:#1e2633; color:#e6edf3; border:1px solid #30363d; border-radius:8px; padding:7px 12px; cursor:pointer; font-size:12px; font-weight:600; }
+  .btn:hover { background:#2b3545; }
   .btnGreen { background:#238636; border-color:#2ea043; }
   .btnGreen:hover { background:#2ea043; }
-  .btnOn { border-color:#58a6ff; background:#132033; color:#58a6ff; }
+  .btnOn { border-color:#38bdf8; background:#0f2942; color:#38bdf8; }
 
-  .phoneWrap { display:flex; justify-content:center; margin:12px 0 18px; }
+  .phoneWrap { display:flex; justify-content:center; margin:14px 0 18px; }
   .phoneFrame {
-    background:#090c10; background-size:cover; background-position:center;
-    border:5px solid #2b3442; border-radius:28px; padding:12px;
-    box-shadow:0 16px 40px rgba(0,0,0,0.55); transition:all .2s ease;
-    width:700px; min-height:345px; display:flex; flex-direction:column;
+    background:radial-gradient(circle at 20% 20%, #16304a 0%, #0a101b 55%, #070a10 100%);
+    background-size:cover; background-position:center;
+    border:5px solid #2b3442; border-radius:30px; padding:14px;
+    box-shadow:0 20px 50px rgba(0,0,0,0.65);
+    width:820px; height:400px; display:flex; flex-direction:column; position:relative;
   }
-  .phoneFrame.portrait { width:345px; min-height:580px; }
-  .phoneHeader { display:flex; justify-content:space-between; align-items:center; padding:0 4px 8px; font-size:11px; color:#8b949e; }
-  .phoneGrid { flex:1; display:grid; gap:8px; grid-template-columns:repeat(3, 1fr); }
-  .tile {
-    background:rgba(19,25,34,0.88); border:1px solid #243042; border-radius:12px; padding:10px 12px;
+  .bentoCanvas {
+    flex:1; display:grid; gap:10px; position:relative;
+  }
+  .cellSlot {
+    border:1px dashed rgba(148,163,184,0.22); border-radius:16px;
+    display:flex; align-items:center; justify-content:center;
+    color:rgba(148,163,184,0.3); font-size:18px; cursor:pointer; transition:all .15s;
+  }
+  .cellSlot:hover, .cellSlot.over { border-color:#38bdf8; background:rgba(56,189,248,0.12); color:#38bdf8; }
+  .bentoBlock {
+    background:rgba(15,23,36,0.72); border:1px solid rgba(255,255,255,0.12);
+    border-radius:18px; padding:12px 14px; position:relative; overflow:hidden;
     display:flex; flex-direction:column; justify-content:space-between;
-    cursor:grab; user-select:none; position:relative; transition:transform .12s, border-color .12s;
+    cursor:grab; user-select:none; backdrop-filter:blur(10px);
+    transition:transform .12s, box-shadow .12s, border-color .12s;
   }
-  .tile:active { cursor:grabbing; }
-  .tile.dragging { opacity:0.4; transform:scale(0.96); }
-  .tile.over { border-color:#58a6ff; box-shadow:0 0 0 2px rgba(88,166,255,0.28); }
-  .tileTop { display:flex; justify-content:space-between; align-items:center; }
-  .tileLbl { font-size:10px; font-weight:700; text-transform:uppercase; color:#8b949e; letter-spacing:0.4px; }
-  .tileRemove { background:none; border:none; color:#6e7681; cursor:pointer; font-size:14px; line-height:1; padding:0 2px; }
-  .tileRemove:hover { color:#f85149; }
-  .tileVal { font-family:ui-monospace,Consolas,monospace; font-size:28px; font-weight:800; margin:4px 0 2px; color:#58a6ff; }
-  .tileUnit { font-size:13px; color:#8b949e; margin-left:4px; }
-  .tileSub { font-size:10px; color:#8b949e; min-height:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .spark { width:100%; height:22px; margin-top:4px; display:block; }
-  .phoneMedia {
-    margin-top:8px; background:rgba(18,23,32,0.88); border:1px solid #243042; border-radius:10px;
-    padding:6px 10px; display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px;
+  .bentoBlock:active { cursor:grabbing; }
+  .bentoBlock.selected { border-color:#38bdf8; box-shadow:0 0 0 2px rgba(56,189,248,0.35); }
+  .bentoBlock.dragging { opacity:0.38; transform:scale(0.97); }
+  .blkTools {
+    position:absolute; top:6px; right:6px; display:none; gap:4px; align-items:center;
+    background:rgba(9,13,20,0.88); border:1px solid #30363d; border-radius:8px; padding:3px 5px; z-index:5;
   }
-  .artImg { width:28px; height:28px; border-radius:6px; object-fit:cover; display:none; }
-  .mediaMeta { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#c9d1d9; }
-  .mediaBtns { display:flex; gap:6px; }
-  .mBtn { background:#1f2733; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:3px 9px; cursor:pointer; font-size:12px; }
-  .mBtn:hover { background:#30363d; }
+  .bentoBlock:hover .blkTools, .bentoBlock.selected .blkTools { display:flex; }
+  .tBtn { background:#1e2633; color:#e6edf3; border:none; border-radius:5px; padding:2px 6px; font-size:11px; cursor:pointer; font-weight:700; }
+  .tBtn:hover { background:#38bdf8; color:#090d14; }
+  .tBtnDel:hover { background:#f85149; color:#fff; }
+  .tColor { width:18px; height:18px; border:none; background:none; padding:0; cursor:pointer; }
 
-  .controlsRow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; background:#161b22; border:1px solid #30363d; border-radius:12px; padding:12px 16px; margin-bottom:12px; }
+  .bLbl { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; }
+  .bVal { font-family:ui-monospace,Consolas,monospace; font-size:28px; font-weight:800; color:#fff; line-height:1.1; }
+  .bSub { font-size:11px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .clockBig { font-size:52px; font-weight:300; letter-spacing:-2px; line-height:1; color:#fff; }
+  .clockSec { font-size:18px; color:#94a3b8; vertical-align:top; margin-left:4px; }
+  .spark { width:100%; height:26px; display:block; margin-top:4px; }
+
+  .controlsRow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; background:#141a24; border:1px solid #263042; border-radius:12px; padding:11px 15px; margin-bottom:12px; }
   .chips { display:flex; flex-wrap:wrap; gap:8px; }
-  .chip { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:7px 12px; cursor:pointer; font-size:13px; user-select:none; }
-  .chip.on { border-color:#58a6ff; background:#132033; }
-  .card { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:16px; }
+  .chip { background:#141a24; border:1px solid #263042; border-radius:10px; padding:7px 12px; cursor:pointer; font-size:12px; font-weight:600; user-select:none; }
+  .chip:hover { border-color:#38bdf8; color:#38bdf8; }
+  .card { background:#141a24; border:1px solid #263042; border-radius:12px; padding:15px; }
   .row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .macroGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; }
   .macroRow { display:flex; gap:6px; align-items:center; }
-  input[type=text], input[type=password], input[type=number] { background:#0d1117; border:1px solid #30363d; color:#e6edf3; border-radius:6px; padding:6px 8px; font-size:12px; width:100%; }
-  a { color:#58a6ff; text-decoration:none; }
-  a:hover { text-decoration:underline; }
+  input[type=text], input[type=password], input[type=number] { background:#0b0f17; border:1px solid #2b3545; color:#e6edf3; border-radius:6px; padding:6px 8px; font-size:12px; width:100%; }
+  a { color:#38bdf8; text-decoration:none; }
 </style>
 </head>
 <body>
-  <h1>PC Monitor USB — студия экрана v8</h1>
-  <div class="sub">Перетаскивай плитки, загружай свой фон, подключай OBS WebSocket и обновляй APK на телефоне в 1 клик.</div>
+  <h1>PC Monitor USB v9 — Bento-студия экрана</h1>
+  <div class="sub">Наведи на любой блок в мини-телефоне: тяни мышкой на любую клетку, меняй размер (W± / H±), цвет и добавляй новые виджеты. На телефоне обновляется мгновенно.</div>
 
   <div class="topBar">
     <div class="pill" id="usb">USB: проверка...</div>
     <div class="pill" id="fpsState">PresentMon: проверка...</div>
     <div class="pill" id="obsState">OBS: не подключён</div>
-    <button class="btn" id="orientBtn" onclick="toggleOrient()">⟳ Вид: Горизонтальный</button>
     <button class="btn" id="autoBtn" onclick="toggleAutoStart()">Автозапуск: ...</button>
     <button class="btn btnGreen" id="apkBtn" onclick="updatePhoneApk()">📲 Обновить APK по USB</button>
   </div>
 
+  <div class="controlsRow">
+    <strong>Пресеты:</strong>
+    <button class="btn" onclick="applyPreset('tiktok')">✨ Стиль TikTok (4×3)</button>
+    <button class="btn" onclick="applyPreset('gamer')">🎮 Игровой (3×2)</button>
+    <button class="btn" onclick="applyPreset('streamer')">📺 Стример (5×3)</button>
+    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <strong>Сетка:</strong>
+      <button class="btn" id="g_4x3" onclick="setGrid(4,3)">4×3</button>
+      <button class="btn" id="g_5x3" onclick="setGrid(5,3)">5×3</button>
+      <button class="btn" id="g_3x2" onclick="setGrid(3,2)">3×2</button>
+      <button class="btn" id="g_4x4" onclick="setGrid(4,4)">4×4</button>
+    </div>
+  </div>
+
   <div class="phoneWrap">
     <div class="phoneFrame" id="phoneFrame">
-      <div class="phoneHeader">
-        <span id="phStatus" class="ok">● USB подключён</span>
-        <span id="phGame"></span>
-      </div>
-      <div class="phoneGrid" id="phoneGrid"></div>
-      <div class="phoneMedia">
-        <img id="artImg" class="artImg" alt="">
-        <div class="mediaMeta" id="mediaInfo">♪ Плеер Windows: ничего не играет</div>
-        <div class="mediaBtns">
-          <button class="mBtn" onclick="mediaCmd('prev')">⏮</button>
-          <button class="mBtn" id="playBtn" onclick="mediaCmd('play_pause')">⏯</button>
-          <button class="mBtn" onclick="mediaCmd('next')">⏭</button>
-        </div>
-      </div>
+      <div class="bentoCanvas" id="bentoCanvas"></div>
+    </div>
+  </div>
+
+  <h2>Добавить блок на свободное место</h2>
+  <div class="chips" id="palette"></div>
+
+  <div class="controlsRow" style="margin-top:14px">
+    <strong>Погода (город):</strong>
+    <input type="text" id="weatherCity" placeholder="Авто по IP (или впиши, напр. Москва)" style="width:240px">
+    <button class="btn btnGreen" onclick="saveWeatherCity()">Применить</button>
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+      <input type="file" id="bgFile" accept="image/*" style="display:none" onchange="uploadBg(this)">
+      <button class="btn" onclick="document.getElementById('bgFile').click()">🖼 Свой фон</button>
+      <button class="btn" onclick="clearBg()">Убрать фон</button>
+      <button class="btn" id="standbyBtn" onclick="toggleStandby()">Часы вне игры: Выкл</button>
     </div>
   </div>
 
@@ -449,39 +477,24 @@ public sealed class TelemetryServer : IDisposable
     </div>
   </div>
 
-  <div class="controlsRow">
-    <strong>Фон экрана:</strong>
-    <input type="file" id="bgFile" accept="image/*" style="display:none" onchange="uploadBg(this)">
-    <button class="btn" onclick="document.getElementById('bgFile').click()">🖼 Загрузить картинку</button>
-    <button class="btn" onclick="clearBg()">Убрать фон</button>
-    <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-      <strong>Настольные часы вне игры:</strong>
-      <button class="btn" id="standbyBtn" onclick="toggleStandby()">Выкл</button>
-    </div>
-  </div>
-
-  <h2>Виджеты на экране</h2>
-  <div class="chips" id="chips"></div>
-
-  <h2>OBS Studio WebSocket (живые кнопки стрима и сцен на телефоне)</h2>
+  <h2>OBS Studio WebSocket</h2>
   <div class="card">
     <div class="row">
       <div style="display:flex;gap:8px;align-items:center;flex:1;min-width:260px">
-        <span style="font-size:12px;color:#8b949e;white-space:nowrap">Порт OBS:</span>
+        <span style="font-size:12px;color:#8b949e">Порт:</span>
         <input type="number" id="obsPort" value="4455" style="width:90px">
-        <span style="font-size:12px;color:#8b949e;white-space:nowrap">Пароль (если есть):</span>
+        <span style="font-size:12px;color:#8b949e">Пароль:</span>
         <input type="password" id="obsPass" placeholder="Пусто, если без пароля">
       </div>
-      <button class="btn btnGreen" onclick="saveObs()">Сохранить OBS</button>
+      <button class="btn btnGreen" onclick="saveConfig()">Сохранить OBS</button>
     </div>
-    <div style="font-size:12px;color:#8b949e;margin-top:8px">В OBS открой: Инструменты → Настройки сервера WebSocket → Включить сервер WebSocket.</div>
   </div>
 
   <h2>Стримерские кнопки (свайп влево на телефоне)</h2>
   <div class="card">
     <div class="macroGrid" id="macroList"></div>
     <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <span style="font-size:12px;color:#8b949e">Горячие клавиши вида: Ctrl+Shift+M, Alt+F9, Win+PrintScreen, F13, vol_mute</span>
+      <span style="font-size:12px;color:#8b949e">Клавиши: Ctrl+Shift+M, Alt+F9, Win+PrintScreen, F13, vol_mute</span>
       <button class="btn btnGreen" onclick="saveMacros()">Сохранить кнопки</button>
     </div>
   </div>
@@ -496,72 +509,344 @@ public sealed class TelemetryServer : IDisposable
   </div>
 
 <script>
-const THEMES = {
-  midnight: { bg:'#090c10', card:'rgba(19,25,34,0.88)', border:'#243042', accent:'#58a6ff' },
-  amoled:   { bg:'#000000', card:'rgba(10,10,10,0.90)', border:'#1f242c', accent:'#00e676' },
-  spide:    { bg:'#14100e', card:'rgba(33,26,22,0.88)', border:'#3a2d26', accent:'#ff8a50' },
-  cyber:    { bg:'#0b0814', card:'rgba(22,16,38,0.88)', border:'#352459', accent:'#d946ef' }
+const DEFAULT_COLORS = {
+  clock_weather:'#38BDF8', media_player:'#38BDF8', fps:'#F59E0B', cpu:'#22D3EE',
+  gpu:'#84CC16', ram:'#A78BFA', network:'#FB923C', cpu_temp:'#F43F5E',
+  gpu_temp:'#10B981', gpu_vram:'#C084FC', cpu_power:'#60A5FA', gpu_power:'#E879F9',
+  cpu_clock:'#38BDF8', gpu_clock:'#A855F7', obs_live:'#EF4444'
 };
 
-let enabled = [], allMetrics = [], macros = [], latestData = {};
-let theme = 'midnight', fontScale = 1.0, standbyMode = 'off', portrait = false, dragId = null, lastArtVer = -1, lastBgVer = -1, autoStartOn = false;
+let layoutCols = 4, layoutRows = 3, layoutBlocks = [], allBlockTypes = [], macros = [], latestData = {};
+let theme = 'midnight', fontScale = 1.0, standbyMode = 'off', dragBlockId = null, lastBgVer = -1, autoStartOn = false;
 const history = {};
 
 async function init() {
   const res = await fetch('/api/config');
   const data = await res.json();
-  enabled = data.enabledMetrics || [];
-  allMetrics = data.allMetrics || [];
+  layoutCols = data.layoutCols || 4;
+  layoutRows = data.layoutRows || 3;
+  layoutBlocks = data.layoutBlocks || [];
+  allBlockTypes = data.allBlockTypes || [];
   theme = data.theme || 'midnight';
   fontScale = data.fontScale || 1.0;
   standbyMode = data.standbyMode || 'off';
   macros = data.macros || [];
 
+  document.getElementById('weatherCity').value = data.weatherCity || '';
   document.getElementById('fontSlider').value = fontScale;
   document.getElementById('fontVal').textContent = Math.round(fontScale * 100) + '%';
   document.getElementById('obsPort').value = data.obsPort || 4455;
   document.getElementById('obsPass').value = data.obsPassword || '';
-  updateStandbyBtn();
 
-  renderAll(); renderMacros(); pollAutoStart();
+  updateStandbyBtn(); renderPalette(); renderCanvas(); renderMacros(); pollAutoStart();
   setInterval(poll, 800); setInterval(pollSession, 3000);
   poll(); pollSession();
 }
 
-function updateStandbyBtn() {
-  const b = document.getElementById('standbyBtn');
-  b.textContent = standbyMode === 'auto' ? '✓ Авто-часы (30 сек)' : 'Выкл';
-  b.classList.toggle('btnOn', standbyMode === 'auto');
+function overlaps(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-async function toggleStandby() {
-  standbyMode = standbyMode === 'auto' ? 'off' : 'auto';
-  updateStandbyBtn();
+function canPlace(testBlk, ignoreId) {
+  if (testBlk.x < 0 || testBlk.y < 0 || testBlk.x + testBlk.w > layoutCols || testBlk.y + testBlk.h > layoutRows) return false;
+  return !layoutBlocks.some(b => b.id !== ignoreId && overlaps(testBlk, b));
+}
+
+function findFreeSpot(w, h) {
+  for (let y = 0; y <= layoutRows - h; y++)
+    for (let x = 0; x <= layoutCols - w; x++)
+      if (canPlace({ x, y, w, h }, null)) return { x, y };
+  return null;
+}
+
+function renderPalette() {
+  document.getElementById('palette').innerHTML = allBlockTypes.map(t =>
+    `<div class="chip" onclick="addBlock('${t.id}')">+ ${t.label}</div>`
+  ).join('');
+}
+
+function addBlock(type) {
+  const prefW = (type === 'clock_weather' || type === 'media_player') ? 2 : 1;
+  const prefH = (type === 'clock_weather' || type === 'media_player') ? 2 : 1;
+  let spot = findFreeSpot(prefW, prefH);
+  let w = prefW, h = prefH;
+  if (!spot) { spot = findFreeSpot(1, 1); w = 1; h = 1; }
+  if (!spot) { alert('Нет свободных клеток в сетке! Удали лишний блок или увеличь сетку (например, 5×3).'); return; }
+  layoutBlocks.push({
+    id: 'b_' + Date.now() + '_' + Math.floor(Math.random()*999),
+    type, x: spot.x, y: spot.y, w, h, color: DEFAULT_COLORS[type] || '#38BDF8'
+  });
+  renderCanvas(); saveConfig();
+}
+
+function removeBlock(id) {
+  if (layoutBlocks.length <= 1) return;
+  layoutBlocks = layoutBlocks.filter(b => b.id !== id);
+  renderCanvas(); saveConfig();
+}
+
+function resizeBlock(id, dw, dh) {
+  const b = layoutBlocks.find(x => x.id === id);
+  if (!b) return;
+  const nw = Math.max(1, Math.min(layoutCols, b.w + dw));
+  const nh = Math.max(1, Math.min(layoutRows, b.h + dh));
+  if (canPlace({ ...b, w: nw, h: nh }, b.id)) {
+    b.w = nw; b.h = nh;
+    renderCanvas(); saveConfig();
+  }
+}
+
+function recolorBlock(id, color) {
+  const b = layoutBlocks.find(x => x.id === id);
+  if (!b) return;
+  b.color = color;
+  renderCanvas(); saveConfig();
+}
+
+function setGrid(c, r) {
+  layoutCols = c; layoutRows = r;
+  layoutBlocks = layoutBlocks.filter(b => b.x < c && b.y < r).map(b => ({
+    ...b, w: Math.min(b.w, c - b.x), h: Math.min(b.h, r - b.y)
+  }));
+  renderCanvas(); saveConfig();
+}
+
+function applyPreset(name) {
+  if (name === 'tiktok') {
+    layoutCols = 4; layoutRows = 3;
+    layoutBlocks = [
+      { id:'p1', type:'clock_weather', x:0, y:0, w:2, h:2, color:'#38BDF8' },
+      { id:'p2', type:'media_player',  x:2, y:0, w:2, h:2, color:'#38BDF8' },
+      { id:'p3', type:'cpu',           x:0, y:2, w:1, h:1, color:'#22D3EE' },
+      { id:'p4', type:'gpu',           x:1, y:2, w:1, h:1, color:'#84CC16' },
+      { id:'p5', type:'ram',           x:2, y:2, w:1, h:1, color:'#A78BFA' },
+      { id:'p6', type:'network',       x:3, y:2, w:1, h:1, color:'#FB923C' }
+    ];
+  } else if (name === 'gamer') {
+    layoutCols = 3; layoutRows = 2;
+    layoutBlocks = [
+      { id:'g1', type:'fps',      x:0, y:0, w:1, h:1, color:'#22C55E' },
+      { id:'g2', type:'cpu',      x:1, y:0, w:1, h:1, color:'#22D3EE' },
+      { id:'g3', type:'cpu_temp', x:2, y:0, w:1, h:1, color:'#F43F5E' },
+      { id:'g4', type:'gpu',      x:0, y:1, w:1, h:1, color:'#84CC16' },
+      { id:'g5', type:'gpu_temp', x:1, y:1, w:1, h:1, color:'#10B981' },
+      { id:'g6', type:'ram',      x:2, y:1, w:1, h:1, color:'#A78BFA' }
+    ];
+  } else if (name === 'streamer') {
+    layoutCols = 5; layoutRows = 3;
+    layoutBlocks = [
+      { id:'s1', type:'clock_weather', x:0, y:0, w:2, h:2, color:'#38BDF8' },
+      { id:'s2', type:'media_player',  x:2, y:0, w:2, h:2, color:'#38BDF8' },
+      { id:'s3', type:'obs_live',      x:4, y:0, w:1, h:2, color:'#EF4444' },
+      { id:'s4', type:'fps',           x:0, y:2, w:1, h:1, color:'#22C55E' },
+      { id:'s5', type:'cpu',           x:1, y:2, w:1, h:1, color:'#22D3EE' },
+      { id:'s6', type:'gpu',           x:2, y:2, w:1, h:1, color:'#84CC16' },
+      { id:'s7', type:'ram',           x:3, y:2, w:1, h:1, color:'#A78BFA' },
+      { id:'s8', type:'network',       x:4, y:2, w:1, h:1, color:'#FB923C' }
+    ];
+  }
+  renderCanvas(); saveConfig();
+}
+
+function renderCanvas() {
+  const cv = document.getElementById('bentoCanvas');
+  cv.style.gridTemplateColumns = `repeat(${layoutCols}, 1fr)`;
+  cv.style.gridTemplateRows = `repeat(${layoutRows}, 1fr)`;
+
+  for (const g of ['4x3','5x3','3x2','4x4']) {
+    const el = document.getElementById('g_' + g);
+    if (el) el.classList.toggle('btnOn', g === `${layoutCols}x${layoutRows}`);
+  }
+
+  let html = '';
+  // Background drop slots for empty cells
+  for (let y = 0; y < layoutRows; y++) {
+    for (let x = 0; x < layoutCols; x++) {
+      const occ = layoutBlocks.some(b => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
+      if (!occ) {
+        html += `<div class="cellSlot" style="grid-column:${x+1};grid-row:${y+1}"
+                      ondragover="event.preventDefault();this.classList.add('over')"
+                      ondragleave="this.classList.remove('over')"
+                      ondrop="onDropCell(event,${x},${y})">+</div>`;
+      }
+    }
+  }
+
+  // Blocks
+  for (const b of layoutBlocks) {
+    const meta = allBlockTypes.find(t => t.id === b.type) || { label: b.type };
+    const grad = `linear-gradient(145deg, ${b.color}22 0%, rgba(15,23,36,0.78) 65%)`;
+    html += `
+      <div class="bentoBlock" draggable="true" id="blk_${b.id}"
+           style="grid-column:${b.x+1} / span ${b.w}; grid-row:${b.y+1} / span ${b.h}; background:${grad}; border-color:${b.color}55"
+           ondragstart="onDragBlock(event,'${b.id}')"
+           ondragover="event.preventDefault()"
+           ondrop="onDropOnBlock(event,'${b.id}')"
+           ondragend="this.classList.remove('dragging')">
+        <div class="blkTools" onclick="event.stopPropagation()">
+          <input type="color" class="tColor" value="${b.color}" title="Цвет" onchange="recolorBlock('${b.id}',this.value)">
+          <button class="tBtn" title="Узже" onclick="resizeBlock('${b.id}',-1,0)">W-</button>
+          <button class="tBtn" title="Шире" onclick="resizeBlock('${b.id}',1,0)">W+</button>
+          <button class="tBtn" title="Ниже" onclick="resizeBlock('${b.id}',0,-1)">H-</button>
+          <button class="tBtn" title="Выше" onclick="resizeBlock('${b.id}',0,1)">H+</button>
+          <button class="tBtn tBtnDel" title="Удалить" onclick="removeBlock('${b.id}')">×</button>
+        </div>
+        <div id="bc_${b.id}" style="height:100%;display:flex;flex-direction:column;justify-content:space-between">
+          <div class="bLbl" style="color:${b.color}">${meta.label}</div>
+          <div class="bVal">--</div>
+          <div class="bSub"></div>
+        </div>
+      </div>`;
+  }
+  cv.innerHTML = html;
+  updateValues();
+}
+
+function onDragBlock(e, id) { dragBlockId = id; e.currentTarget.classList.add('dragging'); }
+
+function onDropCell(e, tx, ty) {
+  e.preventDefault(); e.currentTarget.classList.remove('over');
+  const b = layoutBlocks.find(x => x.id === dragBlockId);
+  if (!b) return;
+  if (canPlace({ ...b, x: tx, y: ty }, b.id)) {
+    b.x = tx; b.y = ty;
+    renderCanvas(); saveConfig();
+  }
+  dragBlockId = null;
+}
+
+function onDropOnBlock(e, targetId) {
+  e.preventDefault();
+  if (!dragBlockId || dragBlockId === targetId) return;
+  const a = layoutBlocks.find(x => x.id === dragBlockId);
+  const b = layoutBlocks.find(x => x.id === targetId);
+  if (!a || !b) return;
+  if (a.w === b.w && a.h === b.h) {
+    const ax = a.x, ay = a.y;
+    a.x = b.x; a.y = b.y; b.x = ax; b.y = ay;
+    renderCanvas(); saveConfig();
+  }
+  dragBlockId = null;
+}
+
+function updateValues() {
+  const d = latestData;
+  if (!d || Object.keys(d).length === 0) return;
+
+  document.getElementById('usb').innerHTML = d.usbConnected ? '<span class="ok">● USB подключён (' + (d.deviceSerial || 'Android') + ')</span>' : '<span class="warn">○ Телефон не найден по USB</span>';
+  document.getElementById('fpsState').innerHTML = d.presentMonActive ? '<span class="ok">● PresentMon активен</span>' : '<span class="warn">○ PresentMon не запущен</span>';
+  document.getElementById('obsState').innerHTML = d.obsConnected ? '<span class="ok">● OBS подключён</span>' : '<span class="warn">○ OBS не подключён</span>';
+
+  if (d.wallpaperVersion !== lastBgVer) {
+    lastBgVer = d.wallpaperVersion;
+    const pf = document.getElementById('phoneFrame');
+    pf.style.backgroundImage = lastBgVer > 0
+      ? `linear-gradient(rgba(9,12,16,0.45),rgba(9,12,16,0.65)), url('/api/wallpaper?v=${lastBgVer}')`
+      : '';
+  }
+
+  const now = new Date();
+  const hhmm = now.toTimeString().slice(0,5);
+  const ss = now.toTimeString().slice(6,8);
+  const dateStr = now.toLocaleDateString('ru-RU', { weekday:'long', day:'numeric', month:'long' });
+
+  for (const b of layoutBlocks) {
+    const el = document.getElementById('bc_' + b.id);
+    if (!el) continue;
+
+    if (b.type === 'clock_weather') {
+      const w = d.weather;
+      const wLine = w && w.tempC != null
+        ? `${w.icon || '⛅'} <strong>${Math.round(w.tempC)}°</strong> ${w.desc || ''} · ${w.city || ''}<div class="bSub">↑${w.maxC ?? '?'}° ↓${w.minC ?? '?'}° · Ощущается как ${w.feelsLikeC ?? '?'}°</div>`
+        : `<div class="bSub">Загрузка погоды...</div>`;
+      el.innerHTML = `
+        <div class="bSub" style="color:#3fb950">● ${d.pcName || 'PC'} · USB</div>
+        <div><span class="clockBig">${hhmm}</span><span class="clockSec">${ss}</span></div>
+        <div class="bSub">${dateStr}</div>
+        <div style="font-size:13px;margin-top:4px">${wLine}</div>`;
+    } else if (b.type === 'media_player') {
+      const title = d.mediaTitle || 'Ничего не играет';
+      const artist = d.mediaArtist || 'Включи музыку на ПК';
+      el.innerHTML = `
+        <div class="bLbl" style="color:${b.color}">MEDIA</div>
+        <div style="font-size:16px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</div>
+        <div class="bSub">${artist}</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn" onclick="event.stopPropagation();mediaCmd('prev')">⏮</button>
+          <button class="btn btnOn" onclick="event.stopPropagation();mediaCmd('play_pause')">${d.mediaPlaying ? '⏸' : '▶'}</button>
+          <button class="btn" onclick="event.stopPropagation();mediaCmd('next')">⏭</button>
+        </div>`;
+    } else {
+      let lbl = b.type.toUpperCase(), val = '--', sub = '', num = null, maxV = 100;
+      if (b.type === 'cpu') { lbl='CPU'; val = d.cpuLoad != null ? Math.round(d.cpuLoad)+'%' : '--'; sub = (d.cpuTemp != null ? Math.round(d.cpuTemp)+'°C · ' : '') + (d.cpuName || ''); num = d.cpuLoad; }
+      else if (b.type === 'gpu') { lbl='GPU'; val = d.gpuLoad != null ? Math.round(d.gpuLoad)+'%' : '--'; sub = (d.gpuTemp != null ? Math.round(d.gpuTemp)+'°C · ' : '') + (d.gpuVramUsedGb != null ? d.gpuVramUsedGb.toFixed(1)+' ГБ' : ''); num = d.gpuLoad; }
+      else if (b.type === 'ram') { lbl='RAM' + (d.ramLoad != null ? ` (${Math.round(d.ramLoad)}%)` : ''); val = d.ramUsedGb != null ? d.ramUsedGb.toFixed(1)+' ГБ' : '--'; sub = d.ramTotalGb != null ? `из ${d.ramTotalGb.toFixed(0)} ГБ` : ''; num = d.ramLoad; }
+      else if (b.type === 'fps') { lbl='FPS'; val = d.fps != null ? d.fps : '--'; sub = d.fps1Low ? `1% low: ${d.fps1Low}` : (d.activeGame || 'Нет игры'); num = d.fps; maxV = 165; }
+      else if (b.type === 'network') { lbl='NETWORK'; val = d.netUpMbps != null ? '↑'+d.netUpMbps.toFixed(1) : '--'; sub = d.netDownMbps != null ? `↓ ${d.netDownMbps.toFixed(1)} Мбит/с` : ''; num = d.netUpMbps; maxV = 50; }
+      else if (b.type === 'cpu_temp') { lbl='CPU TEMP'; val = d.cpuTemp != null ? Math.round(d.cpuTemp)+'°C' : '--'; sub = 'Tctl / Package'; num = d.cpuTemp; }
+      else if (b.type === 'gpu_temp') { lbl='GPU TEMP'; val = d.gpuTemp != null ? Math.round(d.gpuTemp)+'°C' : '--'; sub = 'GPU Core'; num = d.gpuTemp; }
+      else if (b.type === 'gpu_vram') { lbl='VRAM'; val = d.gpuVramUsedGb != null ? d.gpuVramUsedGb.toFixed(1)+' ГБ' : '--'; sub = d.gpuVramTotalGb ? `из ${d.gpuVramTotalGb.toFixed(1)} ГБ` : ''; num = d.gpuVramUsedGb; maxV = d.gpuVramTotalGb || 8; }
+      else if (b.type === 'cpu_power') { lbl='CPU PWR'; val = d.cpuPower != null ? Math.round(d.cpuPower)+' Вт' : '--'; num = d.cpuPower; maxV = 120; }
+      else if (b.type === 'gpu_power') { lbl='GPU PWR'; val = d.gpuPower != null ? Math.round(d.gpuPower)+' Вт' : '--'; num = d.gpuPower; maxV = 200; }
+      else if (b.type === 'cpu_clock') { lbl='CPU CLK'; val = d.cpuClock != null ? Math.round(d.cpuClock)+' МГц' : '--'; num = d.cpuClock; maxV = 5000; }
+      else if (b.type === 'gpu_clock') { lbl='GPU CLK'; val = d.gpuClock != null ? Math.round(d.gpuClock)+' МГц' : '--'; num = d.gpuClock; maxV = 3000; }
+      else if (b.type === 'obs_live') { lbl='OBS'; val = d.obsStreaming ? 'LIVE' : (d.obsConnected ? 'READY' : 'OFF'); sub = d.obsStreamTime || d.obsCurrentScene || ''; }
+
+      let sparkSvg = '';
+      if (num != null && !isNaN(num)) {
+        if (!history[b.id]) history[b.id] = [];
+        history[b.id].push(Math.max(0, Math.min(1, num / maxV)));
+        if (history[b.id].length > 30) history[b.id].shift();
+        if (history[b.id].length >= 2) {
+          const pts = history[b.id].map((v, i) => `${(i / (history[b.id].length - 1) * 100).toFixed(1)},${(24 - v * 21).toFixed(1)}`).join(' ');
+          sparkSvg = `<svg class="spark" viewBox="0 0 100 26" preserveAspectRatio="none"><polyline fill="none" stroke="${b.color}" stroke-width="2" points="${pts}"/></svg>`;
+        }
+      }
+      el.innerHTML = `<div class="bLbl" style="color:${b.color}">${lbl}</div><div class="bVal">${val}</div><div class="bSub">${sub}</div>${sparkSvg}`;
+    }
+  }
+}
+
+async function saveWeatherCity() { await saveConfig(); setTimeout(poll, 1200); }
+function setTheme(t) { theme = t; saveConfig(); }
+function setFontScale(v) { fontScale = parseFloat(v); document.getElementById('fontVal').textContent = Math.round(fontScale*100)+'%'; saveConfig(); }
+function updateStandbyBtn() { const b = document.getElementById('standbyBtn'); b.textContent = standbyMode === 'auto' ? '✓ Часы вне игры: Авто' : 'Часы вне игры: Выкл'; b.classList.toggle('btnOn', standbyMode === 'auto'); }
+async function toggleStandby() { standbyMode = standbyMode === 'auto' ? 'off' : 'auto'; updateStandbyBtn(); await saveConfig(); }
+async function uploadBg(input) { if (!input.files || !input.files[0]) return; await fetch('/api/wallpaper', { method:'POST', body: input.files[0] }); input.value=''; setTimeout(poll, 250); }
+async function clearBg() { await fetch('/api/wallpaper', { method:'DELETE' }); setTimeout(poll, 250); }
+async function mediaCmd(action) { await fetch('/api/media', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action }) }); setTimeout(poll, 250); }
+
+function renderMacros() {
+  document.getElementById('macroList').innerHTML = macros.map((m, i) => `
+    <div class="macroRow">
+      <input type="text" id="ml_${i}" value="${m.label}" placeholder="Название">
+      <input type="text" id="mh_${i}" value="${m.hotkey}" placeholder="Клавиши">
+      <button class="btn" onclick="testMacro(${i})">▶</button>
+    </div>`).join('');
+}
+async function saveMacros() {
+  macros = macros.map((m, i) => ({ id: m.id, label: document.getElementById('ml_'+i).value.trim() || m.label, hotkey: document.getElementById('mh_'+i).value.trim() || m.hotkey }));
   await saveConfig();
 }
+async function testMacro(i) { await fetch('/api/macro', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hotkey: document.getElementById('mh_'+i).value.trim() }) }); }
 
-async function uploadBg(input) {
-  if (!input.files || !input.files[0]) return;
-  await fetch('/api/wallpaper', { method:'POST', body: input.files[0] });
-  input.value = '';
-  setTimeout(poll, 250);
-}
-
-async function clearBg() {
-  await fetch('/api/wallpaper', { method:'DELETE' });
-  setTimeout(poll, 250);
-}
-
-async function saveObs() {
-  await saveConfig();
-  alert('Настройки OBS сохранены — агент переподключится через пару секунд.');
+async function saveConfig() {
+  await fetch('/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      layoutCols, layoutRows, layoutBlocks, theme, fontScale, standbyMode, macros,
+      weatherCity: document.getElementById('weatherCity').value.trim(),
+      obsPort: parseInt(document.getElementById('obsPort').value || '4455', 10),
+      obsPassword: document.getElementById('obsPass').value || ''
+    })
+  });
 }
 
 async function updatePhoneApk() {
   const b = document.getElementById('apkBtn');
   b.disabled = true; b.textContent = '⏳ Устанавливаю...';
   try {
-    const r = await fetch('/api/update-apk', { method: 'POST' });
+    const r = await fetch('/api/update-apk', { method:'POST' });
     const d = await r.json();
     b.textContent = d.ok ? '✓ Обновлено!' : ('✕ ' + (d.message || 'Ошибка'));
   } catch { b.textContent = '✕ Ошибка связи'; }
@@ -570,251 +855,38 @@ async function updatePhoneApk() {
 
 async function pollAutoStart() {
   try {
-    const r = await fetch('/api/autostart');
-    const d = await r.json();
+    const r = await fetch('/api/autostart'); const d = await r.json();
     autoStartOn = !!d.enabled;
     const b = document.getElementById('autoBtn');
     b.textContent = autoStartOn ? '✓ Автозапуск: Вкл' : 'Автозапуск: Выкл';
     b.classList.toggle('btnOn', autoStartOn);
   } catch {}
 }
-
 async function toggleAutoStart() {
   const r = await fetch('/api/autostart', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: !autoStartOn }) });
-  const d = await r.json();
-  autoStartOn = !!d.enabled;
+  const d = await r.json(); autoStartOn = !!d.enabled;
   const b = document.getElementById('autoBtn');
   b.textContent = autoStartOn ? '✓ Автозапуск: Вкл' : 'Автозапуск: Выкл';
   b.classList.toggle('btnOn', autoStartOn);
 }
 
-function toggleOrient() {
-  portrait = !portrait;
-  document.getElementById('phoneFrame').classList.toggle('portrait', portrait);
-  document.getElementById('orientBtn').textContent = portrait ? '⟳ Вид: Вертикальный' : '⟳ Вид: Горизонтальный';
-  updateGridCols();
-}
-
-function setTheme(t) { theme = t; applyThemeUI(); saveConfig(); }
-
-function setFontScale(v) {
-  fontScale = parseFloat(v);
-  document.getElementById('fontVal').textContent = Math.round(fontScale * 100) + '%';
-  document.querySelectorAll('.tileVal').forEach(el => el.style.fontSize = Math.round(28 * fontScale) + 'px');
-  saveConfig();
-}
-
-function applyThemeUI() {
-  const th = THEMES[theme] || THEMES.midnight;
-  const pf = document.getElementById('phoneFrame');
-  if (!pf.style.backgroundImage) pf.style.backgroundColor = th.bg;
-  pf.style.borderColor = th.border;
-  document.querySelectorAll('.tile').forEach(el => { el.style.background = th.card; el.style.borderColor = th.border; });
-  for (const k of Object.keys(THEMES)) {
-    const b = document.getElementById('th_' + k);
-    if (b) b.classList.toggle('btnOn', k === theme);
-  }
-}
-
-function updateGridCols() {
-  const grid = document.getElementById('phoneGrid');
-  const count = Math.max(1, enabled.length);
-  const cols = count <= 2 ? count : (portrait ? 2 : (count <= 6 ? 3 : 4));
-  grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-}
-
-function renderAll() { renderChips(); renderPhone(); applyThemeUI(); updateValues(); }
-
-function renderChips() {
-  document.getElementById('chips').innerHTML = allMetrics.map(m => {
-    const on = enabled.includes(m.id);
-    return `<div class="chip ${on ? 'on' : ''}" onclick="toggleMetric('${m.id}')">${on ? '✓' : '+'} ${m.label}</div>`;
-  }).join('');
-}
-
-function renderPhone() {
-  const grid = document.getElementById('phoneGrid');
-  updateGridCols();
-  const px = Math.round(28 * fontScale);
-  grid.innerHTML = enabled.map(id => {
-    const meta = allMetrics.find(x => x.id === id) || { label: id, unit: '' };
-    return `
-      <div class="tile" draggable="true" data-id="${id}"
-           ondragstart="onDragStart(event,'${id}')" ondragover="onDragOver(event)"
-           ondragleave="onDragLeave(event)" ondrop="onDrop(event,'${id}')" ondragend="onDragEnd(event)">
-        <div class="tileTop">
-          <span class="tileLbl">${meta.label}</span>
-          <button class="tileRemove" title="Скрыть" onclick="event.stopPropagation(); toggleMetric('${id}')">×</button>
-        </div>
-        <div><span class="tileVal" id="pv_${id}" style="font-size:${px}px">--</span><span class="tileUnit">${meta.unit}</span></div>
-        <div class="tileSub" id="ps_${id}"></div>
-        <svg class="spark" id="sp_${id}" viewBox="0 0 100 24" preserveAspectRatio="none"></svg>
-      </div>`;
-  }).join('');
-}
-
-function renderMacros() {
-  document.getElementById('macroList').innerHTML = macros.map((m, i) => `
-    <div class="macroRow">
-      <input type="text" id="ml_${i}" value="${m.label}" placeholder="Название">
-      <input type="text" id="mh_${i}" value="${m.hotkey}" placeholder="Клавиши">
-      <button class="mBtn" title="Тест" onclick="testMacro(${i})">▶</button>
-    </div>
-  `).join('');
-}
-
-async function saveMacros() {
-  macros = macros.map((m, i) => ({
-    id: m.id,
-    label: document.getElementById('ml_' + i).value.trim() || m.label,
-    hotkey: document.getElementById('mh_' + i).value.trim() || m.hotkey
-  }));
-  await saveConfig();
-}
-
-async function testMacro(i) {
-  const hk = document.getElementById('mh_' + i).value.trim();
-  await fetch('/api/macro', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hotkey: hk }) });
-}
-
-function onDragStart(e, id) { dragId = id; e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; }
-function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('over'); }
-function onDragLeave(e) { e.currentTarget.classList.remove('over'); }
-function onDragEnd(e) { e.currentTarget.classList.remove('dragging'); document.querySelectorAll('.tile.over').forEach(el => el.classList.remove('over')); }
-async function onDrop(e, targetId) {
-  e.preventDefault(); e.currentTarget.classList.remove('over');
-  if (!dragId || dragId === targetId) return;
-  const from = enabled.indexOf(dragId), to = enabled.indexOf(targetId);
-  if (from < 0 || to < 0) return;
-  enabled.splice(from, 1); enabled.splice(to, 0, dragId); dragId = null;
-  renderAll(); await saveConfig();
-}
-
-async function toggleMetric(id) {
-  if (enabled.includes(id)) { if (enabled.length <= 1) return; enabled = enabled.filter(x => x !== id); }
-  else enabled.push(id);
-  renderAll(); await saveConfig();
-}
-
-async function saveConfig() {
-  await fetch('/api/config', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      enabledMetrics: enabled, theme, fontScale, standbyMode, macros,
-      obsPort: parseInt(document.getElementById('obsPort').value || '4455', 10),
-      obsPassword: document.getElementById('obsPass').value || ''
-    })
-  });
-}
-
-async function mediaCmd(action) {
-  await fetch('/api/media', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action }) });
-  setTimeout(poll, 250);
-}
-
 async function saveReport() {
-  const r = await fetch('/api/session/save', { method: 'POST' });
-  const d = await r.json();
-  await pollSession();
+  const r = await fetch('/api/session/save', { method:'POST' });
+  const d = await r.json(); await pollSession();
   if (d.ok && d.file) window.open('/reports/' + encodeURIComponent(d.file), '_blank');
 }
-
 async function pollSession() {
   try {
-    const r = await fetch('/api/session');
-    const d = await r.json();
-    const s = d.session;
+    const r = await fetch('/api/session'); const d = await r.json(); const s = d.session;
     document.getElementById('sessInfo').innerHTML = s.active
       ? `<strong>${s.gameName}</strong> · ${s.durationMin} мин · средний FPS: <strong>${s.avgFps ?? '--'}</strong> · просадок: <strong>${s.dropsCount}</strong>`
-      : 'Нет активной игры — запусти игру, запись начнётся автоматически (альт-табы не сбрасывают сеанс).';
+      : 'Нет активной игры — запусти игру, запись начнётся автоматически.';
     const rep = document.getElementById('reportsList');
-    if (d.reports && d.reports.length > 0) {
-      rep.innerHTML = '<strong>Сохранённые отчёты (папка reports\\):</strong><br>' +
-        d.reports.map(f => `<div style="padding:4px 0"><a href="/reports/${encodeURIComponent(f)}" target="_blank">${f}</a></div>`).join('');
-    }
+    if (d.reports && d.reports.length > 0)
+      rep.innerHTML = '<strong>Сохранённые отчёты:</strong><br>' + d.reports.map(f => `<div style="padding:3px 0"><a href="/reports/${encodeURIComponent(f)}" target="_blank">${f}</a></div>`).join('');
   } catch {}
 }
-
-function colorForLoad(v) { return v >= 90 ? '#f85149' : v >= 75 ? '#d29922' : (THEMES[theme]?.accent || '#58a6ff'); }
-function colorForTemp(v) { return v >= 85 ? '#f85149' : v >= 72 ? '#d29922' : '#3fb950'; }
-
-function pushSpark(id, num, maxVal, color) {
-  if (num == null || isNaN(num)) return;
-  if (!history[id]) history[id] = [];
-  history[id].push(Math.max(0, Math.min(1, num / maxVal)));
-  if (history[id].length > 35) history[id].shift();
-  const svg = document.getElementById('sp_' + id);
-  if (!svg || history[id].length < 2) return;
-  const pts = history[id].map((v, i) => `${(i / (history[id].length - 1) * 100).toFixed(1)},${(22 - v * 20).toFixed(1)}`).join(' ');
-  svg.innerHTML = `<polyline fill="none" stroke="${color}" stroke-width="1.8" points="${pts}" />`;
-}
-
-function setTile(id, val, sub, numForSpark, maxVal, color) {
-  const vEl = document.getElementById('pv_' + id);
-  const sEl = document.getElementById('ps_' + id);
-  if (!vEl) return;
-  vEl.textContent = val; vEl.style.color = color;
-  if (sEl) sEl.textContent = sub || '';
-  pushSpark(id, numForSpark, maxVal, color);
-}
-
-function updateValues() {
-  const d = latestData;
-  if (!d || Object.keys(d).length === 0) return;
-
-  document.getElementById('usb').innerHTML = d.usbConnected ? '<span class="ok">● USB подключён (' + (d.deviceSerial || 'Android') + ')</span>' : '<span class="warn">○ Телефон не найден по USB</span>';
-  document.getElementById('phStatus').innerHTML = d.usbConnected ? '<span class="ok">● USB подключён</span>' : '<span class="warn">○ Ожидание USB</span>';
-  document.getElementById('fpsState').innerHTML = d.presentMonActive ? '<span class="ok">● PresentMon активен</span>' : '<span class="warn">○ PresentMon не запущен</span>';
-  document.getElementById('obsState').innerHTML = d.obsConnected
-    ? '<span class="ok">● OBS подключён' + (d.obsStreaming ? ' (LIVE ' + (d.obsStreamTime || '') + ')' : '') + '</span>'
-    : '<span class="warn">○ OBS не подключён</span>';
-  document.getElementById('phGame').textContent = d.activeGame ? ('Игра: ' + d.activeGame) : '';
-
-  if (d.wallpaperVersion !== lastBgVer) {
-    lastBgVer = d.wallpaperVersion;
-    const pf = document.getElementById('phoneFrame');
-    pf.style.backgroundImage = lastBgVer > 0 ? `linear-gradient(rgba(9,12,16,0.52),rgba(9,12,16,0.72)), url('/api/wallpaper?v=${lastBgVer}')` : '';
-  }
-
-  if (d.mediaTitle) {
-    document.getElementById('mediaInfo').textContent = (d.mediaPlaying ? '▶ ' : '⏸ ') + d.mediaTitle + (d.mediaArtist ? ' — ' + d.mediaArtist : '');
-    document.getElementById('playBtn').textContent = d.mediaPlaying ? '⏸' : '▶';
-    if (d.mediaArtVersion !== lastArtVer) {
-      lastArtVer = d.mediaArtVersion;
-      const img = document.getElementById('artImg');
-      img.onload = () => img.style.display = 'block';
-      img.onerror = () => img.style.display = 'none';
-      img.src = '/api/media/art?v=' + lastArtVer;
-    }
-  } else {
-    document.getElementById('mediaInfo').textContent = '♪ Плеер Windows: ничего не играет';
-    document.getElementById('playBtn').textContent = '⏯';
-    document.getElementById('artImg').style.display = 'none';
-  }
-
-  const acc = THEMES[theme]?.accent || '#58a6ff';
-  setTile('fps', d.fps ?? '--', d.fps1Low ? ('1% low: ' + d.fps1Low) : (d.activeGame || ''), d.fps, 165, d.fps == null ? '#8b949e' : d.fps >= 60 ? '#3fb950' : d.fps >= 30 ? '#d29922' : '#f85149');
-  setTile('cpu_load', d.cpuLoad != null ? Math.round(d.cpuLoad) : '--', d.cpuName || '', d.cpuLoad, 100, d.cpuLoad != null ? colorForLoad(d.cpuLoad) : '#8b949e');
-  setTile('cpu_temp', d.cpuTemp != null ? Math.round(d.cpuTemp) : '--', 'Tctl / Package', d.cpuTemp, 100, d.cpuTemp != null ? colorForTemp(d.cpuTemp) : '#8b949e');
-  setTile('gpu_load', d.gpuLoad != null ? Math.round(d.gpuLoad) : '--', d.gpuName || '', d.gpuLoad, 100, d.gpuLoad != null ? colorForLoad(d.gpuLoad) : '#8b949e');
-  setTile('gpu_temp', d.gpuTemp != null ? Math.round(d.gpuTemp) : '--', 'GPU Core', d.gpuTemp, 100, d.gpuTemp != null ? colorForTemp(d.gpuTemp) : '#8b949e');
-  setTile('ram_load', d.ramLoad != null ? Math.round(d.ramLoad) : '--', d.ramUsedGb != null ? (d.ramUsedGb + ' / ' + (d.ramTotalGb ?? '?') + ' ГБ') : '', d.ramLoad, 100, d.ramLoad != null ? colorForLoad(d.ramLoad) : '#8b949e');
-  const vPct = (d.gpuVramUsedGb != null && d.gpuVramTotalGb) ? (d.gpuVramUsedGb / d.gpuVramTotalGb * 100) : null;
-  setTile('gpu_vram', d.gpuVramUsedGb != null ? d.gpuVramUsedGb.toFixed(1) : '--', d.gpuVramTotalGb ? ('из ' + d.gpuVramTotalGb.toFixed(1) + ' ГБ') : '', vPct, 100, vPct != null ? colorForLoad(vPct) : '#8b949e');
-  setTile('net_speed', d.netUpMbps != null ? ('↑' + d.netUpMbps.toFixed(1)) : '--', d.netDownMbps != null ? ('↓ ' + d.netDownMbps.toFixed(1) + ' Мбит/с') : '', d.netUpMbps, 50, '#2dd4bf');
-  setTile('cpu_power', d.cpuPower != null ? Math.round(d.cpuPower) : '--', '', d.cpuPower, 120, acc);
-  setTile('gpu_power', d.gpuPower != null ? Math.round(d.gpuPower) : '--', '', d.gpuPower, 200, acc);
-  setTile('cpu_clock', d.cpuClock != null ? Math.round(d.cpuClock) : '--', '', d.cpuClock, 5000, acc);
-  setTile('gpu_clock', d.gpuClock != null ? Math.round(d.gpuClock) : '--', '', d.gpuClock, 3000, acc);
-}
-
-async function poll() {
-  try {
-    const r = await fetch('/api/metrics');
-    latestData = await r.json();
-    updateValues();
-  } catch {}
-}
+async function poll() { try { const r = await fetch('/api/metrics'); latestData = await r.json(); updateValues(); } catch {} }
 init();
 </script>
 </body>

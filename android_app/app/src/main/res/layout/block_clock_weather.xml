@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/blockRoot"
+    android:layout_width="0dp"
+    android:layout_height="0dp"
+    android:orientation="vertical"
+    android:padding="14dp">
+
+    <TextView
+        android:id="@+id/tvBlockPcStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="● PC · USB"
+        android:textColor="#94A3B8"
+        android:textSize="11sp"
+        android:textStyle="bold" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/tvBlockTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-light"
+            android:includeFontPadding="false"
+            android:text="17:33"
+            android:textColor="#FFFFFF"
+            android:textSize="54sp" />
+
+        <TextView
+            android:id="@+id/tvBlockSec"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:paddingStart="4dp"
+            android:paddingTop="10dp"
+            android:text="00"
+            android:textColor="#94A3B8"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvBlockDate"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="четверг, 26 ноября"
+        android:textColor="#CBD5E1"
+        android:textSize="13sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/tvWeatherIcon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⛅"
+            android:textSize="24sp" />
+
+        <TextView
+            android:id="@+id/tvWeatherTemp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="6dp"
+            android:paddingEnd="8dp"
+            android:text="--°"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvWeatherDesc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="Загрузка погоды..."
+                android:textColor="#E2E8F0"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvWeatherSub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text=""
+                android:textColor="#94A3B8"
+                android:textSize="10sp" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

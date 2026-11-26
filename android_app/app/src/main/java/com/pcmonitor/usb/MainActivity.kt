@@ -1,6 +1,7 @@
 package com.pcmonitor.usb
 
-import android.app.AlertDialog
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.content.res.Configuration
@@ -9,6 +10,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -38,7 +40,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -51,7 +52,6 @@ import kotlin.math.roundToInt
 class MainActivity : AppCompatActivity() {
 
     private val wsUrl = "ws://127.0.0.1:8765/ws"
-    private val configUrl = "http://127.0.0.1:8765/api/config"
     private val mediaUrl = "http://127.0.0.1:8765/api/media"
     private val mediaArtUrl = "http://127.0.0.1:8765/api/media/art"
     private val macroUrl = "http://127.0.0.1:8765/api/macro"
@@ -76,6 +76,7 @@ class MainActivity : AppCompatActivity() {
     private var lastArtVersion = -1
     private var lastWallpaperVersion = -1
     private var hasCustomWallpaper = false
+    private var currentAlbumBmp: Bitmap? = null
     private var lastMediaPlaying: Boolean? = null
     private var lastGameSeenMs = System.currentTimeMillis()
     private var alertPulseToggle = false
@@ -83,15 +84,42 @@ class MainActivity : AppCompatActivity() {
 
     private var currentTheme = "midnight"
     private var currentFontScale = 1.0f
-    private var mediaAccentColor = Color.parseColor("#58A6FF")
+    private var mediaAccentColor = Color.parseColor("#38BDF8")
 
-    private data class ThemeColors(val bg: Int, val card: Int, val border: Int, val accent: Int)
+    private data class ThemeColors(val bgTop: Int, val bgBot: Int, val card: Int, val border: Int, val accent: Int)
     private val themes = mapOf(
-        "midnight" to ThemeColors(Color.parseColor("#090C10"), Color.parseColor("#131922"), Color.parseColor("#243042"), Color.parseColor("#58A6FF")),
-        "amoled" to ThemeColors(Color.parseColor("#000000"), Color.parseColor("#0A0A0A"), Color.parseColor("#1F242C"), Color.parseColor("#00E676")),
-        "spide" to ThemeColors(Color.parseColor("#14100E"), Color.parseColor("#211A16"), Color.parseColor("#3A2D26"), Color.parseColor("#FF8A50")),
-        "cyber" to ThemeColors(Color.parseColor("#0B0814"), Color.parseColor("#161026"), Color.parseColor("#352459"), Color.parseColor("#D946EF"))
+        "midnight" to ThemeColors(Color.parseColor("#13283F"), Color.parseColor("#070B12"), Color.parseColor("#121A26"), Color.parseColor("#2A3A4F"), Color.parseColor("#38BDF8")),
+        "amoled"   to ThemeColors(Color.parseColor("#000000"), Color.parseColor("#000000"), Color.parseColor("#0A0A0A"), Color.parseColor("#1F242C"), Color.parseColor("#00E676")),
+        "spide"    to ThemeColors(Color.parseColor("#291A14"), Color.parseColor("#0E0A08"), Color.parseColor("#1D1512"), Color.parseColor("#423027"), Color.parseColor("#FF8A50")),
+        "cyber"    to ThemeColors(Color.parseColor("#22103B"), Color.parseColor("#08050F"), Color.parseColor("#160E26"), Color.parseColor("#3D2566"), Color.parseColor("#D946EF"))
     )
+
+    private data class BentoBlock(val id: String, val type: String, val x: Int, val y: Int, val w: Int, val h: Int, val colorHex: String)
+    private var layoutCols = 4
+    private var layoutRows = 3
+    private var layoutBlocks: List<BentoBlock> = listOf(
+        BentoBlock("b1", "clock_weather", 0, 0, 2, 2, "#38BDF8"),
+        BentoBlock("b2", "media_player",  2, 0, 2, 2, "#38BDF8"),
+        BentoBlock("b3", "cpu",           0, 2, 1, 1, "#22D3EE"),
+        BentoBlock("b4", "gpu",           1, 2, 1, 1, "#84CC16"),
+        BentoBlock("b5", "ram",           2, 2, 1, 1, "#A78BFA"),
+        BentoBlock("b6", "fps",           3, 2, 1, 1, "#F59E0B")
+    )
+    private var lastLayoutSignature = ""
+
+    private data class MacroItem(val label: String, val hotkey: String)
+    private var macros: List<MacroItem> = listOf(
+        MacroItem("🎙 Мут мик.", "Ctrl+Shift+M"),
+        MacroItem("🔴 Запись", "Ctrl+Shift+R"),
+        MacroItem("🎬 Сцена 1", "Ctrl+Shift+1"),
+        MacroItem("🎬 Сцена 2", "Ctrl+Shift+2"),
+        MacroItem("📸 Скриншот", "Win+PrintScreen"),
+        MacroItem("🔇 Звук ПК", "vol_mute")
+    )
+    private var lastObsScenesKey = ""
+
+    private val blockViews = mutableMapOf<String, View>()
+    private var lastPayload: JSONObject? = null
 
     private lateinit var gestureDetector: GestureDetector
     private lateinit var rootContainer: View
@@ -127,64 +155,29 @@ class MainActivity : AppCompatActivity() {
     private lateinit var obsScenesRow: LinearLayout
     private lateinit var macroGrid: GridLayout
 
-    private val allMetricIds = listOf(
-        "fps", "cpu_load", "cpu_temp", "gpu_load", "gpu_temp", "ram_load",
-        "gpu_vram", "net_speed", "cpu_power", "gpu_power", "cpu_clock", "gpu_clock"
-    )
-    private val metricLabels = mapOf(
-        "fps" to "FPS в игре",
-        "cpu_load" to "Загрузка CPU",
-        "cpu_temp" to "Темп. CPU",
-        "gpu_load" to "Загрузка GPU",
-        "gpu_temp" to "Темп. GPU",
-        "ram_load" to "Память RAM",
-        "gpu_vram" to "Видеопамять",
-        "net_speed" to "Сеть ↑↓",
-        "cpu_power" to "Питание CPU",
-        "gpu_power" to "Питание GPU",
-        "cpu_clock" to "Частота CPU",
-        "gpu_clock" to "Частота GPU"
-    )
-
-    private var enabledMetrics: MutableList<String> = mutableListOf(
-        "fps", "cpu_load", "cpu_temp", "gpu_load", "gpu_temp", "ram_load"
-    )
-
-    private data class MacroItem(val label: String, val hotkey: String)
-    private var macros: List<MacroItem> = listOf(
-        MacroItem("🎙 Мут мик.", "Ctrl+Shift+M"),
-        MacroItem("🔴 Запись", "Ctrl+Shift+R"),
-        MacroItem("🎬 Сцена 1", "Ctrl+Shift+1"),
-        MacroItem("🎬 Сцена 2", "Ctrl+Shift+2"),
-        MacroItem("📸 Скриншот", "Win+PrintScreen"),
-        MacroItem("🔇 Звук ПК", "vol_mute")
-    )
-    private var lastObsScenesKey = ""
-
-    private data class CardHolder(
-        val cardRoot: View,
-        val tvLabel: TextView,
-        val tvValue: TextView,
-        val tvUnit: TextView,
-        val tvSub: TextView,
-        val sparkline: SparklineView,
-        val progress: ProgressBar
-    )
-
-    private val cards = mutableMapOf<String, CardHolder>()
-    private var lastPayload: JSONObject? = null
-
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private val secFmt = SimpleDateFormat("ss", Locale.getDefault())
     private val dateFmt = SimpleDateFormat("EEEE, d MMMM", Locale("ru"))
 
     private val clockAndShiftRunnable = object : Runnable {
         override fun run() {
             if (isDestroyedFlag) return
             val now = Date()
-            tvClockTime.text = timeFmt.format(now)
-            tvClockDate.text = dateFmt.format(now).replaceFirstChar { it.uppercase() }
+            val hhmm = timeFmt.format(now)
+            val ss = secFmt.format(now)
+            val dateStr = dateFmt.format(now)
 
-            // Subtle OLED burn-in pixel shift every 2 minutes
+            tvClockTime.text = hhmm
+            tvClockDate.text = dateStr.replaceFirstChar { it.uppercase() }
+
+            // Update any inline clock_weather Bento blocks every second
+            layoutBlocks.filter { it.type == "clock_weather" }.forEach { b ->
+                val v = blockViews[b.id] ?: return@forEach
+                v.findViewById<TextView>(R.id.tvBlockTime)?.text = hhmm
+                v.findViewById<TextView>(R.id.tvBlockSec)?.text = ss
+                v.findViewById<TextView>(R.id.tvBlockDate)?.text = dateStr
+            }
+
             pixelShiftStep = (pixelShiftStep + 1) % 120
             if (pixelShiftStep == 0) {
                 val offsets = listOf(-3f to -2f, 3f to -2f, 3f to 2f, -3f to 2f, 0f to 0f)
@@ -235,23 +228,18 @@ class MainActivity : AppCompatActivity() {
         macroGrid = findViewById(R.id.macroGrid)
 
         ivMediaArt.clipToOutline = true
-        ivMediaArt.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, view.width, view.height, 36f)
-            }
-        }
+        ivMediaArt.outlineProvider = roundOutline(36f)
 
-        findViewById<View>(R.id.btnSettings).setOnClickListener { openSettingsDialog() }
+        findViewById<View>(R.id.btnSettings).setOnClickListener {
+            Toast.makeText(this, "Настрой блоки в студии на ПК: http://127.0.0.1:8765/", Toast.LENGTH_LONG).show()
+        }
         findViewById<View>(R.id.btnRotate).setOnClickListener { cycleOrientation() }
         findViewById<View>(R.id.btnDim).setOnClickListener { toggleDim() }
         findViewById<View>(R.id.btnClockMode).setOnClickListener {
             manualStandbyOverride = true
             setStandbyVisible(!isStandbyOpen)
         }
-        standbyOverlay.setOnClickListener {
-            manualStandbyOverride = true
-            setStandbyVisible(false)
-        }
+        standbyOverlay.setOnClickListener { manualStandbyOverride = true; setStandbyVisible(false) }
         findViewById<View>(R.id.btnMacros).setOnClickListener { showMacroOverlay(true) }
         findViewById<View>(R.id.btnCloseMacros).setOnClickListener { showMacroOverlay(false) }
         tvMiniMedia.setOnClickListener { showMediaOverlay(true) }
@@ -277,8 +265,7 @@ class MainActivity : AppCompatActivity() {
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
                 if (e1 == null) return false
-                val dx = e2.x - e1.x
-                val dy = e2.y - e1.y
+                val dx = e2.x - e1.x; val dy = e2.y - e1.y
                 if (abs(dy) > abs(dx) && abs(dy) > 90 && abs(velocityY) > 120) {
                     if (dy < 0 && !isMediaOpen && !isMacroOpen) { showMediaOverlay(true); return true }
                     if (dy > 0 && isMediaOpen) { showMediaOverlay(false); return true }
@@ -290,8 +277,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        loadSavedMetrics()
-        rebuildGrid()
+        rebuildBentoGrid()
         rebuildMacroGrid()
         applyMediaOrientationLayout()
         applyTheme()
@@ -301,26 +287,140 @@ class MainActivity : AppCompatActivity() {
         connectWebSocket()
     }
 
+    private fun roundOutline(radius: Float) = object : ViewOutlineProvider() {
+        override fun getOutline(view: View, outline: Outline) {
+            outline.setRoundRect(0, 0, view.width, view.height, radius)
+        }
+    }
+
+    private fun parseColorSafe(hex: String, fallback: Int): Int =
+        try { Color.parseColor(hex) } catch (_: Exception) { fallback }
+
+    private fun getBatteryText(): String {
+        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return ""
+        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+        val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+        val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+        if (level < 0) return ""
+        val pct = (level * 100f / scale.coerceAtLeast(1)).roundToInt()
+        return " · 🔋 $pct%" + if (charging) " ⚡" else ""
+    }
+
+    private fun makeGlassBlockBg(accent: Int, criticalPulse: Boolean = false): GradientDrawable {
+        val th = themes[currentTheme] ?: themes["midnight"]!!
+        if (criticalPulse) {
+            return GradientDrawable().apply {
+                setColor(Color.argb(215, 78, 16, 20))
+                setStroke(4, Color.parseColor("#F85149"))
+                cornerRadius = 34f
+            }
+        }
+        val alpha = if (hasCustomWallpaper) 180 else 210
+        val topCol = Color.argb(
+            alpha,
+            (Color.red(th.card) * 4 + Color.red(accent)) / 5,
+            (Color.green(th.card) * 4 + Color.green(accent)) / 5,
+            (Color.blue(th.card) * 4 + Color.blue(accent)) / 5
+        )
+        val botCol = Color.argb(alpha, Color.red(th.card), Color.green(th.card), Color.blue(th.card))
+        val stroke = Color.argb(85, Color.red(accent), Color.green(accent), Color.blue(accent))
+        return GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(topCol, botCol)).apply {
+            cornerRadius = 34f
+            setStroke(2, stroke)
+        }
+    }
+
+    private fun rebuildBentoGrid() {
+        metricsGrid.removeAllViews()
+        blockViews.clear()
+
+        metricsGrid.columnCount = layoutCols.coerceIn(2, 6)
+        metricsGrid.rowCount = layoutRows.coerceIn(2, 5)
+
+        val inflater = LayoutInflater.from(this)
+        val th = themes[currentTheme] ?: themes["midnight"]!!
+
+        layoutBlocks.forEach { b ->
+            val accent = parseColorSafe(b.colorHex, th.accent)
+            val view = when (b.type) {
+                "clock_weather" -> inflater.inflate(R.layout.block_clock_weather, metricsGrid, false)
+                "media_player" -> {
+                    val v = inflater.inflate(R.layout.block_media_player, metricsGrid, false)
+                    val art = v.findViewById<ImageView>(R.id.ivBlkArt)
+                    art.clipToOutline = true
+                    art.outlineProvider = roundOutline(24f)
+                    currentAlbumBmp?.let { art.setImageBitmap(it) }
+                    setupBouncyMediaBtn(v.findViewById(R.id.btnBlkPrev), "prev")
+                    setupBouncyMediaBtn(v.findViewById(R.id.btnBlkPlay), "play_pause")
+                    setupBouncyMediaBtn(v.findViewById(R.id.btnBlkNext), "next")
+                    setupBouncyMediaBtn(v.findViewById(R.id.btnBlkVolDown), "vol_down")
+                    setupBouncyMediaBtn(v.findViewById(R.id.btnBlkVolUp), "vol_up")
+                    v
+                }
+                else -> {
+                    val v = inflater.inflate(R.layout.block_metric, metricsGrid, false)
+                    v.findViewById<TextView>(R.id.tvBlkLabel).setTextColor(accent)
+                    v.findViewById<TextView>(R.id.tvBlkVal).setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f * currentFontScale)
+                    v
+                }
+            }
+
+            if (b.type != "clock_weather") {
+                view.background = makeGlassBlockBg(accent)
+            } else {
+                view.background = null
+            }
+
+            val cx = b.x.coerceIn(0, layoutCols - 1)
+            val cy = b.y.coerceIn(0, layoutRows - 1)
+            val cw = b.w.coerceIn(1, layoutCols - cx)
+            val ch = b.h.coerceIn(1, layoutRows - cy)
+
+            val params = GridLayout.LayoutParams(
+                GridLayout.spec(cy, ch, ch.toFloat()),
+                GridLayout.spec(cx, cw, cw.toFloat())
+            ).apply {
+                width = 0
+                height = 0
+                setMargins(8, 8, 8, 8)
+            }
+            view.layoutParams = params
+            blockViews[b.id] = view
+            metricsGrid.addView(view)
+        }
+    }
+
+    private fun applyTheme() {
+        val th = themes[currentTheme] ?: themes["midnight"]!!
+        rootContainer.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(th.bgTop, th.bgBot))
+        macroOverlay.setBackgroundColor(Color.argb(245, Color.red(th.bgBot), Color.green(th.bgBot), Color.blue(th.bgBot)))
+        layoutBlocks.forEach { b ->
+            val v = blockViews[b.id] ?: return@forEach
+            val accent = parseColorSafe(b.colorHex, th.accent)
+            if (b.type != "clock_weather") v.background = makeGlassBlockBg(accent)
+            if (b.type != "clock_weather" && b.type != "media_player") {
+                v.findViewById<TextView>(R.id.tvBlkVal)?.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f * currentFontScale)
+            }
+        }
+        rebuildMacroGrid()
+    }
+
     private fun setStandbyVisible(show: Boolean) {
         if (show == isStandbyOpen) return
         isStandbyOpen = show
         if (show) {
-            standbyOverlay.alpha = 0f
-            standbyOverlay.visibility = View.VISIBLE
+            standbyOverlay.alpha = 0f; standbyOverlay.visibility = View.VISIBLE
             standbyOverlay.animate().alpha(1f).setDuration(260).start()
         } else {
-            standbyOverlay.animate().alpha(0f).setDuration(200).withEndAction {
-                standbyOverlay.visibility = View.GONE
-            }.start()
+            standbyOverlay.animate().alpha(0f).setDuration(200).withEndAction { standbyOverlay.visibility = View.GONE }.start()
         }
     }
 
     private fun fetchCustomWallpaper() {
         val req = Request.Builder().url(wallpaperUrl).build()
         client.newCall(req).enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                mainHandler.post { clearCustomWallpaper() }
-            }
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) { mainHandler.post { clearCustomWallpaper() } }
             override fun onResponse(call: okhttp3.Call, response: Response) {
                 response.use { res ->
                     if (res.code == 200) {
@@ -330,8 +430,7 @@ class MainActivity : AppCompatActivity() {
                             if (bmp != null) {
                                 mainHandler.post {
                                     hasCustomWallpaper = true
-                                    ivCustomBg.setImageBitmap(bmp)
-                                    ivCustomBg.visibility = View.VISIBLE
+                                    ivCustomBg.setImageBitmap(bmp); ivCustomBg.visibility = View.VISIBLE
                                     customBgScrim.visibility = View.VISIBLE
                                     applyTheme()
                                 }
@@ -347,39 +446,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun clearCustomWallpaper() {
         hasCustomWallpaper = false
-        ivCustomBg.setImageBitmap(null)
-        ivCustomBg.visibility = View.GONE
-        customBgScrim.visibility = View.GONE
+        ivCustomBg.setImageBitmap(null); ivCustomBg.visibility = View.GONE; customBgScrim.visibility = View.GONE
         applyTheme()
     }
 
     private fun triggerUsbSelfUpdate() {
-        btnUpdateApp.text = "⏳ ..."
-        btnUpdateApp.isEnabled = false
-        val req = Request.Builder()
-            .url(updateApkUrl)
-            .post("{}".toRequestBody("application/json; charset=utf-8".toMediaType()))
-            .build()
+        btnUpdateApp.text = "⏳ ..."; btnUpdateApp.isEnabled = false
+        val req = Request.Builder().url(updateApkUrl).post("{}".toRequestBody("application/json; charset=utf-8".toMediaType())).build()
         client.newCall(req).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                mainHandler.post {
-                    btnUpdateApp.text = "⬇ Обновить"
-                    btnUpdateApp.isEnabled = true
-                    Toast.makeText(this@MainActivity, "Нет связи с ПК", Toast.LENGTH_SHORT).show()
-                }
+                mainHandler.post { btnUpdateApp.text = "⬇ Обновить"; btnUpdateApp.isEnabled = true }
             }
             override fun onResponse(call: okhttp3.Call, response: Response) {
-                val txt = response.body?.string() ?: ""
-                response.close()
+                val txt = response.body?.string() ?: ""; response.close()
                 mainHandler.post {
-                    btnUpdateApp.text = "⬇ Обновить"
-                    btnUpdateApp.isEnabled = true
-                    val ok = txt.contains("\"ok\":true")
-                    Toast.makeText(
-                        this@MainActivity,
-                        if (ok) "Обновление установлено!" else "Ошибка обновления APK",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    btnUpdateApp.text = "⬇ Обновить"; btnUpdateApp.isEnabled = true
+                    Toast.makeText(this@MainActivity, if (txt.contains("\"ok\":true")) "Обновлено!" else "Ошибка APK", Toast.LENGTH_SHORT).show()
                 }
             }
         })
@@ -388,13 +470,9 @@ class MainActivity : AppCompatActivity() {
     private fun applyMediaOrientationLayout() {
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         mediaBody.orientation = if (isLandscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        val rightParams = mediaRightCol.layoutParams as LinearLayout.LayoutParams
-        if (isLandscape) {
-            rightParams.width = 0; rightParams.height = LinearLayout.LayoutParams.WRAP_CONTENT; rightParams.weight = 1f
-        } else {
-            rightParams.width = LinearLayout.LayoutParams.MATCH_PARENT; rightParams.height = LinearLayout.LayoutParams.WRAP_CONTENT; rightParams.weight = 0f
-        }
-        mediaRightCol.layoutParams = rightParams
+        val rp = mediaRightCol.layoutParams as LinearLayout.LayoutParams
+        if (isLandscape) { rp.width = 0; rp.weight = 1f } else { rp.width = LinearLayout.LayoutParams.MATCH_PARENT; rp.weight = 0f }
+        mediaRightCol.layoutParams = rp
     }
 
     private fun setupBouncyMediaBtn(view: View, action: String) {
@@ -417,8 +495,7 @@ class MainActivity : AppCompatActivity() {
         isMediaOpen = show
         val h = window.decorView.height.toFloat().coerceAtLeast(800f)
         if (show) {
-            mediaOverlay.visibility = View.VISIBLE
-            mediaOverlay.translationY = h
+            mediaOverlay.visibility = View.VISIBLE; mediaOverlay.translationY = h
             mediaOverlay.animate().translationY(0f).setDuration(240).start()
         } else {
             mediaOverlay.animate().translationY(h).setDuration(200).withEndAction { mediaOverlay.visibility = View.GONE }.start()
@@ -430,8 +507,7 @@ class MainActivity : AppCompatActivity() {
         isMacroOpen = show
         val w = window.decorView.width.toFloat().coerceAtLeast(800f)
         if (show) {
-            macroOverlay.visibility = View.VISIBLE
-            macroOverlay.translationX = w
+            macroOverlay.visibility = View.VISIBLE; macroOverlay.translationX = w
             macroOverlay.animate().translationX(0f).setDuration(220).start()
         } else {
             macroOverlay.animate().translationX(w).setDuration(200).withEndAction { macroOverlay.visibility = View.GONE }.start()
@@ -439,10 +515,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sendPost(url: String, json: JSONObject) {
-        val req = Request.Builder()
-            .url(url)
-            .post(json.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
-            .build()
+        val req = Request.Builder().url(url).post(json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())).build()
         client.newCall(req).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {}
             override fun onResponse(call: okhttp3.Call, response: Response) { response.close() }
@@ -463,10 +536,13 @@ class MainActivity : AppCompatActivity() {
                                 val blurred = fastBlur(bmp, 12)
                                 val vibrant = extractVibrantColor(bmp)
                                 mainHandler.post {
-                                    ivMediaArt.setImageBitmap(bmp)
-                                    ivMediaArt.visibility = View.VISIBLE
+                                    currentAlbumBmp = bmp
+                                    ivMediaArt.setImageBitmap(bmp); ivMediaArt.visibility = View.VISIBLE
                                     ivMediaBackdrop.setImageBitmap(blurred)
                                     applyMediaAccent(vibrant)
+                                    layoutBlocks.filter { it.type == "media_player" }.forEach { b ->
+                                        blockViews[b.id]?.findViewById<ImageView>(R.id.ivBlkArt)?.setImageBitmap(bmp)
+                                    }
                                 }
                                 return
                             }
@@ -479,9 +555,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun clearAlbumArt() {
+        currentAlbumBmp = null
         ivMediaArt.visibility = View.GONE
         ivMediaBackdrop.setImageBitmap(null)
         applyMediaAccent((themes[currentTheme] ?: themes["midnight"]!!).accent)
+        layoutBlocks.filter { it.type == "media_player" }.forEach { b ->
+            blockViews[b.id]?.findViewById<ImageView>(R.id.ivBlkArt)?.setImageBitmap(null)
+        }
     }
 
     private fun applyMediaAccent(color: Int) {
@@ -491,64 +571,46 @@ class MainActivity : AppCompatActivity() {
         mediaProgress.progressTintList = ColorStateList.valueOf(color)
         mediaProgress.progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#33FFFFFF"))
         btnPlayPause.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+        layoutBlocks.filter { it.type == "media_player" }.forEach { b ->
+            val v = blockViews[b.id] ?: return@forEach
+            v.findViewById<ProgressBar>(R.id.pbBlkMedia)?.progressTintList = ColorStateList.valueOf(color)
+            v.findViewById<ImageView>(R.id.btnBlkPlay)?.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+        }
     }
 
     private fun extractVibrantColor(bmp: Bitmap): Int {
         val small = Bitmap.createScaledBitmap(bmp, 16, 16, true)
-        var bestColor = Color.parseColor("#58A6FF")
-        var bestScore = -1f
+        var bestColor = Color.parseColor("#38BDF8"); var bestScore = -1f
         val hsv = FloatArray(3)
-        for (y in 0 until 16) {
-            for (x in 0 until 16) {
-                Color.colorToHSV(small.getPixel(x, y), hsv)
-                val sat = hsv[1]; val v = hsv[2]
-                if (v > 0.28f && sat > 0.25f) {
-                    val score = sat * 1.4f + v * 0.6f
-                    if (score > bestScore) {
-                        bestScore = score
-                        hsv[2] = v.coerceIn(0.68f, 0.96f); hsv[1] = sat.coerceIn(0.50f, 0.92f)
-                        bestColor = Color.HSVToColor(hsv)
-                    }
-                }
+        for (y in 0 until 16) for (x in 0 until 16) {
+            Color.colorToHSV(small.getPixel(x, y), hsv)
+            if (hsv[2] > 0.28f && hsv[1] > 0.25f) {
+                val sc = hsv[1] * 1.4f + hsv[2] * 0.6f
+                if (sc > bestScore) { bestScore = sc; hsv[2] = hsv[2].coerceIn(0.68f, 0.96f); hsv[1] = hsv[1].coerceIn(0.50f, 0.92f); bestColor = Color.HSVToColor(hsv) }
             }
         }
-        small.recycle()
-        return bestColor
+        small.recycle(); return bestColor
     }
 
     private fun fastBlur(src: Bitmap, radius: Int): Bitmap {
         val w = 48; val h = 48
         val bmp = Bitmap.createScaledBitmap(src, w, h, true)
-        val pix = IntArray(w * h)
-        bmp.getPixels(pix, 0, w, 0, 0, w, h)
-        val tmp = IntArray(w * h)
-        val r = radius.coerceIn(2, 16)
+        val pix = IntArray(w * h); bmp.getPixels(pix, 0, w, 0, 0, w, h)
+        val tmp = IntArray(w * h); val r = radius.coerceIn(2, 16)
         repeat(2) {
-            for (y in 0 until h) {
-                for (x in 0 until w) {
-                    var rs = 0; var gs = 0; var bs = 0; var cnt = 0
-                    for (dx in -r..r) {
-                        val c = pix[y * w + (x + dx).coerceIn(0, w - 1)]
-                        rs += Color.red(c); gs += Color.green(c); bs += Color.blue(c); cnt++
-                    }
-                    tmp[y * w + x] = Color.rgb(rs / cnt, gs / cnt, bs / cnt)
-                }
+            for (y in 0 until h) for (x in 0 until w) {
+                var rs = 0; var gs = 0; var bs = 0; var cnt = 0
+                for (dx in -r..r) { val c = pix[y * w + (x + dx).coerceIn(0, w - 1)]; rs += Color.red(c); gs += Color.green(c); bs += Color.blue(c); cnt++ }
+                tmp[y * w + x] = Color.rgb(rs / cnt, gs / cnt, bs / cnt)
             }
-            for (y in 0 until h) {
-                for (x in 0 until w) {
-                    var rs = 0; var gs = 0; var bs = 0; var cnt = 0
-                    for (dy in -r..r) {
-                        val c = tmp[(y + dy).coerceIn(0, h - 1) * w + x]
-                        rs += Color.red(c); gs += Color.green(c); bs += Color.blue(c); cnt++
-                    }
-                    pix[y * w + x] = Color.rgb(rs / cnt, gs / cnt, bs / cnt)
-                }
+            for (y in 0 until h) for (x in 0 until w) {
+                var rs = 0; var gs = 0; var bs = 0; var cnt = 0
+                for (dy in -r..r) { val c = tmp[(y + dy).coerceIn(0, h - 1) * w + x]; rs += Color.red(c); gs += Color.green(c); bs += Color.blue(c); cnt++ }
+                pix[y * w + x] = Color.rgb(rs / cnt, gs / cnt, bs / cnt)
             }
         }
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        out.setPixels(pix, 0, w, 0, 0, w, h)
-        bmp.recycle()
-        return out
+        out.setPixels(pix, 0, w, 0, 0, w, h); bmp.recycle(); return out
     }
 
     private fun formatTime(sec: Double?): String {
@@ -556,29 +618,6 @@ class MainActivity : AppCompatActivity() {
         val total = sec.roundToInt()
         return "%d:%02d".format(total / 60, total % 60)
     }
-
-    private fun cardFillColor(th: ThemeColors): Int =
-        if (hasCustomWallpaper) Color.argb(196, Color.red(th.card), Color.green(th.card), Color.blue(th.card)) else th.card
-
-    private fun applyTheme() {
-        val th = themes[currentTheme] ?: themes["midnight"]!!
-        rootContainer.setBackgroundColor(th.bg)
-        macroOverlay.setBackgroundColor(Color.argb(245, Color.red(th.bg), Color.green(th.bg), Color.blue(th.bg)))
-        val fill = cardFillColor(th)
-        cards.values.forEach { holder ->
-            holder.cardRoot.background = makeCardDrawable(fill, th.border)
-            holder.tvValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34f * currentFontScale)
-        }
-        rebuildMacroGrid()
-    }
-
-    private fun makeCardDrawable(fill: Int, stroke: Int, strokeW: Int = 2): GradientDrawable =
-        GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            setColor(fill)
-            setStroke(strokeW, stroke)
-            cornerRadius = 28f
-        }
 
     private fun macroAccentFor(idx: Int, label: String): Int {
         val low = label.lowercase()
@@ -593,8 +632,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun splitIconAndTitle(raw: String): Pair<String, String> {
-        val trimmed = raw.trim()
-        val sp = trimmed.indexOf(' ')
+        val trimmed = raw.trim(); val sp = trimmed.indexOf(' ')
         return if (sp in 1..4) trimmed.substring(0, sp) to trimmed.substring(sp + 1).trim() else "⚡" to trimmed
     }
 
@@ -605,15 +643,13 @@ class MainActivity : AppCompatActivity() {
         val count = macros.size.coerceAtLeast(1)
         val cols = if (isLandscape) 3 else 2
         val rows = ceil(count.toDouble() / cols).toInt().coerceAtLeast(1)
-        macroGrid.columnCount = cols
-        macroGrid.rowCount = rows
+        macroGrid.columnCount = cols; macroGrid.rowCount = rows
 
         val inflater = LayoutInflater.from(this)
         macros.forEachIndexed { idx, m ->
             val tile = inflater.inflate(R.layout.item_macro_tile, macroGrid, false)
             val accent = macroAccentFor(idx, m.label)
             val (icon, title) = splitIconAndTitle(m.label)
-
             val softBg = Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent))
             val subtleBorder = Color.argb(105, Color.red(accent), Color.green(accent), Color.blue(accent))
             val normalBg = GradientDrawable(
@@ -623,26 +659,15 @@ class MainActivity : AppCompatActivity() {
                     th.card
                 )
             ).apply { cornerRadius = 38f; setStroke(2, subtleBorder) }
-            val flashBg = GradientDrawable().apply {
-                setColor(Color.argb(95, Color.red(accent), Color.green(accent), Color.blue(accent)))
-                cornerRadius = 38f; setStroke(3, accent)
-            }
+            val flashBg = GradientDrawable().apply { setColor(Color.argb(95, Color.red(accent), Color.green(accent), Color.blue(accent))); cornerRadius = 38f; setStroke(3, accent) }
 
             tile.background = normalBg
-            val tvIcon = tile.findViewById<TextView>(R.id.tvMacroIcon)
-            val tvTitle = tile.findViewById<TextView>(R.id.tvMacroTitle)
-            val tvKey = tile.findViewById<TextView>(R.id.tvMacroHotkey)
-
-            tvIcon.text = icon
-            tvIcon.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(softBg); setStroke(2, subtleBorder) }
-            tvTitle.text = title
-            tvKey.text = m.hotkey
-            tvKey.setTextColor(accent)
-            tvKey.background = GradientDrawable().apply {
-                setColor(Color.parseColor("#22000000")); cornerRadius = 18f
-                setStroke(1, Color.argb(70, Color.red(accent), Color.green(accent), Color.blue(accent)))
+            tile.findViewById<TextView>(R.id.tvMacroIcon).apply { text = icon; background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(softBg); setStroke(2, subtleBorder) } }
+            tile.findViewById<TextView>(R.id.tvMacroTitle).text = title
+            tile.findViewById<TextView>(R.id.tvMacroHotkey).apply {
+                text = m.hotkey; setTextColor(accent)
+                background = GradientDrawable().apply { setColor(Color.parseColor("#22000000")); cornerRadius = 18f; setStroke(1, Color.argb(70, Color.red(accent), Color.green(accent), Color.blue(accent))) }
             }
-
             tile.setOnClickListener { v ->
                 v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                 v.background = flashBg
@@ -651,11 +676,7 @@ class MainActivity : AppCompatActivity() {
                 }.start()
                 sendPost(macroUrl, JSONObject().put("hotkey", m.hotkey))
             }
-
-            val params = GridLayout.LayoutParams(
-                GridLayout.spec(idx / cols, 1f), GridLayout.spec(idx % cols, 1f)
-            ).apply { width = 0; height = 0; setMargins(10, 10, 10, 10) }
-            tile.layoutParams = params
+            tile.layoutParams = GridLayout.LayoutParams(GridLayout.spec(idx / cols, 1f), GridLayout.spec(idx % cols, 1f)).apply { width = 0; height = 0; setMargins(10, 10, 10, 10) }
             macroGrid.addView(tile)
         }
     }
@@ -664,15 +685,12 @@ class MainActivity : AppCompatActivity() {
         val connected = d.optBoolean("obsConnected", false)
         obsBar.visibility = if (connected) View.VISIBLE else View.GONE
         if (!connected) return
-
         val streaming = d.optBoolean("obsStreaming", false)
         val recording = d.optBoolean("obsRecording", false)
-        val timecode = if (d.isNull("obsStreamTime")) "" else d.optString("obsStreamTime", "")
+        val tc = if (d.isNull("obsStreamTime")) "" else d.optString("obsStreamTime", "")
         val curScene = if (d.isNull("obsCurrentScene")) "" else d.optString("obsCurrentScene", "")
-
-        btnObsStream.text = if (streaming) "🔴 LIVE $timecode" else "○ OBS Стрим"
+        btnObsStream.text = if (streaming) "🔴 LIVE $tc" else "○ OBS Стрим"
         btnObsStream.setTextColor(if (streaming) Color.parseColor("#FF7B72") else Color.parseColor("#E6EDF3"))
-
         btnObsRecord.text = if (recording) "🔴 Идёт запись" else "⏺ Запись"
         btnObsRecord.setTextColor(if (recording) Color.parseColor("#FF7B72") else Color.parseColor("#E6EDF3"))
 
@@ -687,39 +705,27 @@ class MainActivity : AppCompatActivity() {
         scenes.forEach { name ->
             val active = name == curScene
             val pill = TextView(this).apply {
-                text = name
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                text = name; setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setTextColor(if (active) Color.parseColor("#090C10") else Color.parseColor("#C9D1D9"))
                 setPadding(26, 12, 26, 12)
-                background = GradientDrawable().apply {
-                    cornerRadius = 32f
-                    setColor(if (active) Color.parseColor("#58A6FF") else Color.parseColor("#1B222C"))
-                    setStroke(1, Color.parseColor("#30363D"))
-                }
-                setOnClickListener { v ->
-                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    sendPost(obsUrl, JSONObject().put("action", "switch_scene").put("sceneName", name))
-                }
+                background = GradientDrawable().apply { cornerRadius = 32f; setColor(if (active) Color.parseColor("#38BDF8") else Color.parseColor("#1B222C")); setStroke(1, Color.parseColor("#30363D")) }
+                setOnClickListener { v -> v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY); sendPost(obsUrl, JSONObject().put("action", "switch_scene").put("sceneName", name)) }
             }
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.marginEnd = 12
-            pill.layoutParams = lp
+            pill.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = 12 }
             obsScenesRow.addView(pill)
         }
     }
 
     override fun onResume() { super.onResume(); applyImmersiveMode() }
-
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        rebuildGrid(); rebuildMacroGrid(); applyMediaOrientationLayout()
+        rebuildBentoGrid(); rebuildMacroGrid(); applyMediaOrientationLayout()
         lastPayload?.let { updateUi(it) }
     }
-
     override fun onDestroy() {
         isDestroyedFlag = true
         mainHandler.removeCallbacks(clockAndShiftRunnable)
-        webSocket?.close(1000, "Activity destroyed")
+        webSocket?.close(1000, "Destroyed")
         client.dispatcher.executorService.shutdown()
         super.onDestroy()
     }
@@ -757,77 +763,15 @@ class MainActivity : AppCompatActivity() {
         window.attributes = lp
     }
 
-    private fun loadSavedMetrics() {
-        val prefs = getSharedPreferences("pc_monitor_prefs", MODE_PRIVATE)
-        val saved = prefs.getString("enabled_metrics", null) ?: return
-        val list = saved.split(",").filter { it in allMetricIds }
-        if (list.isNotEmpty()) enabledMetrics = list.toMutableList()
-    }
-
-    private fun saveMetricsLocally() {
-        getSharedPreferences("pc_monitor_prefs", MODE_PRIVATE)
-            .edit().putString("enabled_metrics", enabledMetrics.joinToString(",")).apply()
-    }
-
-    private fun rebuildGrid() {
-        metricsGrid.removeAllViews()
-        cards.clear()
-
-        val th = themes[currentTheme] ?: themes["midnight"]!!
-        val fill = cardFillColor(th)
-        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val count = enabledMetrics.size.coerceAtLeast(1)
-        val cols = when {
-            count <= 2 -> count
-            isLandscape -> if (count <= 6) 3 else 4
-            else -> 2
-        }
-        val rows = ceil(count.toDouble() / cols).toInt().coerceAtLeast(1)
-
-        metricsGrid.columnCount = cols
-        metricsGrid.rowCount = rows
-
-        val inflater = LayoutInflater.from(this)
-        enabledMetrics.forEachIndexed { index, id ->
-            val card = inflater.inflate(R.layout.item_metric_card, metricsGrid, false)
-            val params = GridLayout.LayoutParams(
-                GridLayout.spec(index / cols, 1f), GridLayout.spec(index % cols, 1f)
-            ).apply { width = 0; height = 0; setMargins(8, 8, 8, 8) }
-            card.layoutParams = params
-
-            val holder = CardHolder(
-                cardRoot = card.findViewById(R.id.cardRoot),
-                tvLabel = card.findViewById(R.id.tvLabel),
-                tvValue = card.findViewById(R.id.tvValue),
-                tvUnit = card.findViewById(R.id.tvUnit),
-                tvSub = card.findViewById(R.id.tvSub),
-                sparkline = card.findViewById(R.id.sparkline),
-                progress = card.findViewById(R.id.progressBar)
-            )
-            holder.cardRoot.background = makeCardDrawable(fill, th.border)
-            holder.tvValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34f * currentFontScale)
-            holder.tvLabel.text = metricLabels[id] ?: id
-            cards[id] = holder
-            metricsGrid.addView(card)
-        }
-    }
-
     private fun connectWebSocket() {
         if (isDestroyedFlag) return
         val request = Request.Builder().url(wsUrl).build()
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                mainHandler.post {
-                    tvStatus.text = "● USB подключён"
-                    tvStatus.setTextColor(Color.parseColor("#3FB950"))
-                }
+                mainHandler.post { tvStatus.text = "● USB"; tvStatus.setTextColor(Color.parseColor("#3FB950")) }
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
-                try {
-                    val json = JSONObject(text)
-                    lastPayload = json
-                    mainHandler.post { updateUi(json) }
-                } catch (_: Exception) { }
+                try { val json = JSONObject(text); lastPayload = json; mainHandler.post { updateUi(json) } } catch (_: Exception) {}
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = scheduleReconnect()
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = scheduleReconnect()
@@ -836,10 +780,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun scheduleReconnect() {
         if (isDestroyedFlag) return
-        mainHandler.post {
-            tvStatus.text = "○ Ожидание ПК..."
-            tvStatus.setTextColor(Color.parseColor("#D29922"))
-        }
+        mainHandler.post { tvStatus.text = "○ USB..."; tvStatus.setTextColor(Color.parseColor("#D29922")) }
         mainHandler.postDelayed({ connectWebSocket() }, 2000)
     }
 
@@ -853,15 +794,27 @@ class MainActivity : AppCompatActivity() {
             if (wpVer > 0) fetchCustomWallpaper() else clearCustomWallpaper()
         }
 
-        val remoteArr = d.optJSONArray("enabledMetrics")
-        if (remoteArr != null && remoteArr.length() > 0) {
-            val remoteList = mutableListOf<String>()
-            for (i in 0 until remoteArr.length()) {
-                val id = remoteArr.optString(i)
-                if (id in allMetricIds) remoteList.add(id)
-            }
-            if (remoteList.isNotEmpty() && remoteList != enabledMetrics) {
-                enabledMetrics = remoteList; saveMetricsLocally(); rebuildGrid()
+        // Sync Bento Layout from PC Studio
+        val rCols = d.optInt("layoutCols", layoutCols).coerceIn(2, 6)
+        val rRows = d.optInt("layoutRows", layoutRows).coerceIn(2, 5)
+        val rBlocksArr = d.optJSONArray("layoutBlocks")
+        if (rBlocksArr != null && rBlocksArr.length() > 0) {
+            val sig = "$rCols:$rRows:${rBlocksArr}"
+            if (sig != lastLayoutSignature) {
+                lastLayoutSignature = sig
+                layoutCols = rCols; layoutRows = rRows
+                val list = mutableListOf<BentoBlock>()
+                for (i in 0 until rBlocksArr.length()) {
+                    val o = rBlocksArr.optJSONObject(i) ?: continue
+                    list.add(BentoBlock(
+                        id = o.optString("id", "b$i"),
+                        type = o.optString("type", "cpu"),
+                        x = o.optInt("x", 0), y = o.optInt("y", 0),
+                        w = o.optInt("w", 1), h = o.optInt("h", 1),
+                        colorHex = o.optString("color", "#38BDF8")
+                    ))
+                }
+                if (list.isNotEmpty()) { layoutBlocks = list; rebuildBentoGrid() }
             }
         }
 
@@ -877,8 +830,8 @@ class MainActivity : AppCompatActivity() {
         if (remoteMacros != null && remoteMacros.length() > 0) {
             val parsed = mutableListOf<MacroItem>()
             for (i in 0 until remoteMacros.length()) {
-                val obj = remoteMacros.optJSONObject(i) ?: continue
-                parsed.add(MacroItem(obj.optString("label", "Кнопка"), obj.optString("hotkey", "")))
+                val o = remoteMacros.optJSONObject(i) ?: continue
+                parsed.add(MacroItem(o.optString("label", "Кнопка"), o.optString("hotkey", "")))
             }
             if (parsed.isNotEmpty() && parsed != macros) { macros = parsed; rebuildMacroGrid() }
         }
@@ -889,30 +842,26 @@ class MainActivity : AppCompatActivity() {
         val hasGame = game.isNotEmpty() && game != "null" && !d.isNull("fps")
         tvGameName.text = if (game.isNotEmpty() && game != "null") "Игра: $game" else ""
 
-        // Auto-standby desk clock logic
         if (hasGame) {
-            lastGameSeenMs = System.currentTimeMillis()
-            manualStandbyOverride = false
+            lastGameSeenMs = System.currentTimeMillis(); manualStandbyOverride = false
             if (isStandbyOpen) setStandbyVisible(false)
         } else if (d.optString("standbyMode", "off") == "auto" && !manualStandbyOverride && !isMediaOpen && !isMacroOpen) {
-            if (System.currentTimeMillis() - lastGameSeenMs > 30_000L && !isStandbyOpen) {
-                setStandbyVisible(true)
-            }
+            if (System.currentTimeMillis() - lastGameSeenMs > 30_000L && !isStandbyOpen) setStandbyVisible(true)
         }
 
-        // Media + album art
+        // Media state
         val mTitle = if (d.isNull("mediaTitle")) "" else d.optString("mediaTitle", "")
         val mArtist = if (d.isNull("mediaArtist")) "" else d.optString("mediaArtist", "")
         val mPlaying = d.optBoolean("mediaPlaying", false)
         val artVer = d.optInt("mediaArtVersion", 0)
         val posSec = optNullableDouble(d, "mediaPosSec")
         val durSec = optNullableDouble(d, "mediaDurSec")
+        val progressVal = if (posSec != null && durSec != null && durSec > 0) ((posSec / durSec) * 1000.0).roundToInt().coerceIn(0, 1000) else 0
 
         if (artVer != lastArtVersion) {
             lastArtVersion = artVer
             if (mTitle.isNotEmpty()) fetchAlbumArt() else clearAlbumArt()
         }
-
         if (lastMediaPlaying != mPlaying) {
             lastMediaPlaying = mPlaying
             audioVisualizer.setPlaying(mPlaying && mTitle.isNotEmpty())
@@ -923,178 +872,153 @@ class MainActivity : AppCompatActivity() {
         if (mTitle.isNotEmpty()) {
             val icon = if (mPlaying) "▶" else "⏸"
             val shortTrack = "$icon $mTitle" + if (mArtist.isNotEmpty()) " — $mArtist" else ""
-            tvMiniMedia.text = "⌃ $shortTrack"
-            tvClockMedia.text = shortTrack
+            tvMiniMedia.text = "⌃ $shortTrack"; tvClockMedia.text = shortTrack
             tvMediaStatus.text = if (mPlaying) "NOW PLAYING" else "PAUSED"
-            tvMediaTitle.text = mTitle
-            tvMediaArtist.text = mArtist
+            tvMediaTitle.text = mTitle; tvMediaArtist.text = mArtist
             btnPlayPause.setImageResource(if (mPlaying) R.drawable.ic_pause else R.drawable.ic_play)
-            tvMediaPos.text = formatTime(posSec)
-            tvMediaDur.text = formatTime(durSec)
-            mediaProgress.progress = if (posSec != null && durSec != null && durSec > 0) ((posSec / durSec) * 1000.0).roundToInt().coerceIn(0, 1000) else 0
+            tvMediaPos.text = formatTime(posSec); tvMediaDur.text = formatTime(durSec)
+            mediaProgress.progress = progressVal
         } else {
             tvMiniMedia.text = "⌃ Свайп вверх — плеер · ⇠ Свайп влево — кнопки"
             tvClockMedia.text = "Нажми в любом месте — вернуться к датчикам"
-            tvMediaStatus.text = "WINDOWS MEDIA"
-            tvMediaTitle.text = "Ничего не играет"
-            tvMediaArtist.text = ""
+            tvMediaStatus.text = "WINDOWS MEDIA"; tvMediaTitle.text = "Ничего не играет"; tvMediaArtist.text = ""
             btnPlayPause.setImageResource(R.drawable.ic_play)
             tvMediaPos.text = "0:00"; tvMediaDur.text = "0:00"; mediaProgress.progress = 0
             audioVisualizer.setPlaying(false); clearAlbumArt()
         }
 
+        // Populate every active Bento Block
         val th = themes[currentTheme] ?: themes["midnight"]!!
-        val accentColor = th.accent
+        val pcName = d.optString("pcName", "PC")
+        val wObj = d.optJSONObject("weather")
 
-        cards["fps"]?.let { c ->
-            val fps = if (d.isNull("fps")) null else d.optInt("fps")
-            val low1 = if (d.isNull("fps1Low")) null else d.optInt("fps1Low")
-            if (fps != null) {
-                c.tvValue.text = fps.toString(); c.tvUnit.text = "FPS"
-                c.tvSub.text = if (low1 != null) "1% low: $low1 FPS" else ""
-                val col = when { fps >= 60 -> Color.parseColor("#3FB950"); fps >= 30 -> Color.parseColor("#D29922"); else -> Color.parseColor("#F85149") }
-                setCardData(c, col, (fps * 100 / 165).coerceIn(0, 100), fps / 165f, false)
-            } else {
-                c.tvValue.text = "--"; c.tvUnit.text = "FPS"
-                c.tvSub.text = if (d.optBoolean("presentMonActive", false)) "Нет активной игры" else "PresentMon не запущен"
-                setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
+        layoutBlocks.forEach { b ->
+            val v = blockViews[b.id] ?: return@forEach
+            val accent = parseColorSafe(b.colorHex, th.accent)
+
+            when (b.type) {
+                "clock_weather" -> {
+                    v.findViewById<TextView>(R.id.tvBlockPcStatus)?.text = "● $pcName · USB${getBatteryText()}"
+                    if (wObj != null && !wObj.isNull("tempC")) {
+                        v.findViewById<TextView>(R.id.tvWeatherIcon)?.text = wObj.optString("icon", "⛅")
+                        v.findViewById<TextView>(R.id.tvWeatherTemp)?.text = "${wObj.optDouble("tempC").roundToInt()}°"
+                        val desc = wObj.optString("desc", "")
+                        val city = wObj.optString("city", "")
+                        v.findViewById<TextView>(R.id.tvWeatherDesc)?.text = if (city.isNotEmpty()) "$desc · $city" else desc
+                        val mx = if (wObj.isNull("maxC")) "?" else "${wObj.optDouble("maxC").roundToInt()}°"
+                        val mn = if (wObj.isNull("minC")) "?" else "${wObj.optDouble("minC").roundToInt()}°"
+                        val fl = if (wObj.isNull("feelsLikeC")) "?" else "${wObj.optDouble("feelsLikeC").roundToInt()}°"
+                        v.findViewById<TextView>(R.id.tvWeatherSub)?.text = "↑$mx ↓$mn · Ощущается как $fl"
+                    }
+                }
+                "media_player" -> {
+                    v.findViewById<TextView>(R.id.tvBlkMediaTitle)?.text = if (mTitle.isNotEmpty()) mTitle else "Ничего не играет"
+                    v.findViewById<TextView>(R.id.tvBlkMediaArtist)?.text = if (mArtist.isNotEmpty()) mArtist else "Нажмите ▶ для продолжения"
+                    v.findViewById<ImageView>(R.id.btnBlkPlay)?.setImageResource(if (mPlaying) R.drawable.ic_pause else R.drawable.ic_play)
+                    v.findViewById<ProgressBar>(R.id.pbBlkMedia)?.progress = progressVal
+                }
+                else -> bindMetricBlock(v, b, d, accent)
+            }
+        }
+    }
+
+    private fun bindMetricBlock(v: View, b: BentoBlock, d: JSONObject, accent: Int) {
+        val tvLbl = v.findViewById<TextView>(R.id.tvBlkLabel) ?: return
+        val tvVal = v.findViewById<TextView>(R.id.tvBlkVal) ?: return
+        val tvUnit = v.findViewById<TextView>(R.id.tvBlkUnit) ?: return
+        val tvSub = v.findViewById<TextView>(R.id.tvBlkSub) ?: return
+        val spark = v.findViewById<SparklineView>(R.id.blkSpark) ?: return
+
+        var lbl = b.type.uppercase(); var valStr = "--"; var unit = ""; var sub = ""
+        var norm: Float? = null; var critical = false
+
+        when (b.type) {
+            "cpu" -> {
+                val load = optNullableDouble(d, "cpuLoad"); val temp = optNullableDouble(d, "cpuTemp")
+                lbl = "CPU"
+                if (load != null) { valStr = load.roundToInt().toString(); unit = "%"; norm = (load / 100.0).toFloat() }
+                sub = (if (temp != null) "${temp.roundToInt()}°C · " else "") + d.optString("cpuName", "")
+                critical = (temp != null && temp >= 86.0)
+            }
+            "gpu" -> {
+                val load = optNullableDouble(d, "gpuLoad"); val temp = optNullableDouble(d, "gpuTemp")
+                val vu = optNullableDouble(d, "gpuVramUsedGb"); val vt = optNullableDouble(d, "gpuVramTotalGb")
+                lbl = "GPU"
+                if (load != null) { valStr = load.roundToInt().toString(); unit = "%"; norm = (load / 100.0).toFloat() }
+                val tStr = if (temp != null) "${temp.roundToInt()}°C" else ""
+                val vStr = if (vu != null && vt != null) "${String.format("%.1f", vu)}/${String.format("%.0f", vt)} ГБ" else ""
+                sub = listOf(tStr, vStr).filter { it.isNotEmpty() }.joinToString(" · ")
+                critical = (temp != null && temp >= 84.0) || (vu != null && vt != null && vt > 0 && vu / vt >= 0.95)
+            }
+            "ram" -> {
+                val pct = optNullableDouble(d, "ramLoad"); val used = optNullableDouble(d, "ramUsedGb"); val total = optNullableDouble(d, "ramTotalGb")
+                lbl = if (pct != null) "RAM (${pct.roundToInt()}%)" else "RAM"
+                if (used != null) { valStr = String.format("%.1f", used); unit = "ГБ" }
+                if (pct != null) norm = (pct / 100.0).toFloat()
+                if (used != null && total != null) sub = "${String.format("%.1f", used)} / ${String.format("%.0f", total)} ГБ"
+                critical = (pct != null && pct >= 94.0)
+            }
+            "fps" -> {
+                val fps = if (d.isNull("fps")) null else d.optInt("fps")
+                val low1 = if (d.isNull("fps1Low")) null else d.optInt("fps1Low")
+                lbl = "FPS"
+                if (fps != null) { valStr = fps.toString(); unit = "FPS"; norm = fps / 165f; sub = if (low1 != null) "1% low: $low1" else d.optString("activeGame", "") }
+                else { sub = if (d.optBoolean("presentMonActive", false)) "Нет игры" else "PresentMon выкл" }
+            }
+            "network" -> {
+                val up = optNullableDouble(d, "netUpMbps"); val down = optNullableDouble(d, "netDownMbps")
+                lbl = "NETWORK"
+                if (up != null) { valStr = "↑${String.format("%.1f", up)}"; unit = "Мбит"; norm = (up / 50.0).toFloat() }
+                if (down != null) sub = "↓ ${String.format("%.1f", down)} Мбит/с"
+            }
+            "cpu_temp" -> {
+                val t = optNullableDouble(d, "cpuTemp"); lbl = "CPU TEMP"
+                if (t != null) { valStr = t.roundToInt().toString(); unit = "°C"; norm = (t / 100.0).toFloat(); critical = t >= 86.0 }
+                sub = "Tctl / Package"
+            }
+            "gpu_temp" -> {
+                val t = optNullableDouble(d, "gpuTemp"); lbl = "GPU TEMP"
+                if (t != null) { valStr = t.roundToInt().toString(); unit = "°C"; norm = (t / 100.0).toFloat(); critical = t >= 84.0 }
+                sub = "GPU Core"
+            }
+            "gpu_vram" -> {
+                val vu = optNullableDouble(d, "gpuVramUsedGb"); val vt = optNullableDouble(d, "gpuVramTotalGb"); lbl = "VRAM"
+                if (vu != null) { valStr = String.format("%.1f", vu); unit = "ГБ"; if (vt != null && vt > 0) { norm = (vu / vt).toFloat(); sub = "из ${String.format("%.0f", vt)} ГБ"; critical = vu / vt >= 0.95 } }
+            }
+            "cpu_power" -> {
+                val p = optNullableDouble(d, "cpuPower"); lbl = "CPU PWR"
+                if (p != null) { valStr = p.roundToInt().toString(); unit = "Вт"; norm = (p / 120.0).toFloat() }
+            }
+            "gpu_power" -> {
+                val p = optNullableDouble(d, "gpuPower"); lbl = "GPU PWR"
+                if (p != null) { valStr = p.roundToInt().toString(); unit = "Вт"; norm = (p / 200.0).toFloat() }
+            }
+            "cpu_clock" -> {
+                val c = optNullableDouble(d, "cpuClock"); lbl = "CPU CLK"
+                if (c != null) { valStr = c.roundToInt().toString(); unit = "МГц"; norm = (c / 5000.0).toFloat() }
+            }
+            "gpu_clock" -> {
+                val c = optNullableDouble(d, "gpuClock"); lbl = "GPU CLK"
+                if (c != null) { valStr = c.roundToInt().toString(); unit = "МГц"; norm = (c / 3000.0).toFloat() }
+            }
+            "obs_live" -> {
+                lbl = "OBS"
+                val live = d.optBoolean("obsStreaming", false); val rec = d.optBoolean("obsRecording", false)
+                valStr = if (live) "LIVE" else if (rec) "REC" else if (d.optBoolean("obsConnected", false)) "READY" else "OFF"
+                sub = if (!d.isNull("obsStreamTime")) d.optString("obsStreamTime", "") else d.optString("obsCurrentScene", "")
+                critical = live
             }
         }
 
-        updatePercentCard("cpu_load", d, "cpuLoad", d.optString("cpuName", ""), accentColor)
-        updateTempCard("cpu_temp", d, "cpuTemp", "Tctl / Package", 86.0)
-        updatePercentCard("gpu_load", d, "gpuLoad", d.optString("gpuName", ""), accentColor)
-        updateTempCard("gpu_temp", d, "gpuTemp", "GPU Core", 84.0)
-
-        cards["ram_load"]?.let { c ->
-            val pct = optNullableDouble(d, "ramLoad")
-            val used = optNullableDouble(d, "ramUsedGb")
-            val total = optNullableDouble(d, "ramTotalGb")
-            if (pct != null) {
-                c.tvValue.text = pct.roundToInt().toString(); c.tvUnit.text = "%"
-                c.tvSub.text = if (used != null && total != null) "$used / $total ГБ" else ""
-                setCardData(c, loadColor(pct, accentColor), pct.roundToInt().coerceIn(0, 100), (pct / 100.0).toFloat(), pct >= 94.0)
-            } else {
-                c.tvValue.text = "--"; c.tvUnit.text = "%"; c.tvSub.text = ""
-                setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
-            }
-        }
-
-        cards["gpu_vram"]?.let { c ->
-            val used = optNullableDouble(d, "gpuVramUsedGb")
-            val total = optNullableDouble(d, "gpuVramTotalGb")
-            if (used != null) {
-                c.tvValue.text = String.format("%.1f", used); c.tvUnit.text = "ГБ"
-                val pct = if (total != null && total > 0) ((used / total) * 100).roundToInt() else 0
-                c.tvSub.text = if (total != null) "из ${String.format("%.1f", total)} ГБ ($pct%)" else ""
-                setCardData(c, loadColor(pct.toDouble(), accentColor), pct.coerceIn(0, 100), pct / 100f, pct >= 95)
-            } else {
-                c.tvValue.text = "--"; c.tvUnit.text = "ГБ"; c.tvSub.text = ""
-                setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
-            }
-        }
-
-        cards["net_speed"]?.let { c ->
-            val up = optNullableDouble(d, "netUpMbps")
-            val down = optNullableDouble(d, "netDownMbps")
-            if (up != null) {
-                c.tvValue.text = "↑${String.format("%.1f", up)}"; c.tvUnit.text = "Мбит"
-                c.tvSub.text = if (down != null) "↓ ${String.format("%.1f", down)} Мбит/с" else ""
-                val col = Color.parseColor("#2DD4BF")
-                setCardData(c, col, ((up / 50.0) * 100).roundToInt().coerceIn(0, 100), (up / 50.0).toFloat(), false)
-            } else {
-                c.tvValue.text = "--"; c.tvUnit.text = "Мбит"; c.tvSub.text = ""
-                setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
-            }
-        }
-
-        updateSimpleCard("cpu_power", d, "cpuPower", "Вт", 120.0, accentColor)
-        updateSimpleCard("gpu_power", d, "gpuPower", "Вт", 200.0, accentColor)
-        updateSimpleCard("cpu_clock", d, "cpuClock", "МГц", 5000.0, accentColor)
-        updateSimpleCard("gpu_clock", d, "gpuClock", "МГц", 3000.0, accentColor)
-    }
-
-    private fun updatePercentCard(id: String, d: JSONObject, key: String, sub: String, accent: Int) {
-        val c = cards[id] ?: return
-        val v = optNullableDouble(d, key)
-        if (v != null) {
-            c.tvValue.text = v.roundToInt().toString(); c.tvUnit.text = "%"; c.tvSub.text = sub
-            setCardData(c, loadColor(v, accent), v.roundToInt().coerceIn(0, 100), (v / 100.0).toFloat(), false)
-        } else {
-            c.tvValue.text = "--"; c.tvUnit.text = "%"; c.tvSub.text = ""
-            setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
-        }
-    }
-
-    private fun updateTempCard(id: String, d: JSONObject, key: String, sub: String, alertThresh: Double) {
-        val c = cards[id] ?: return
-        val v = optNullableDouble(d, key)
-        if (v != null) {
-            c.tvValue.text = v.roundToInt().toString(); c.tvUnit.text = "°C"; c.tvSub.text = sub
-            val col = when { v >= alertThresh -> Color.parseColor("#F85149"); v >= 72.0 -> Color.parseColor("#D29922"); else -> Color.parseColor("#3FB950") }
-            setCardData(c, col, v.roundToInt().coerceIn(0, 100), (v / 100.0).toFloat(), v >= alertThresh)
-        } else {
-            c.tvValue.text = "--"; c.tvUnit.text = "°C"; c.tvSub.text = ""
-            setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
-        }
-    }
-
-    private fun updateSimpleCard(id: String, d: JSONObject, key: String, unit: String, maxVal: Double, color: Int) {
-        val c = cards[id] ?: return
-        val v = optNullableDouble(d, key)
-        if (v != null) {
-            c.tvValue.text = v.roundToInt().toString(); c.tvUnit.text = unit; c.tvSub.text = ""
-            val norm = (v / maxVal).toFloat()
-            setCardData(c, color, (norm * 100).roundToInt().coerceIn(0, 100), norm, false)
-        } else {
-            c.tvValue.text = "--"; c.tvUnit.text = unit; c.tvSub.text = ""
-            setCardData(c, Color.parseColor("#8B949E"), 0, null, false)
-        }
-    }
-
-    private fun loadColor(pct: Double, accent: Int): Int = when {
-        pct >= 90.0 -> Color.parseColor("#F85149")
-        pct >= 75.0 -> Color.parseColor("#D29922")
-        else -> accent
-    }
-
-    private fun setCardData(c: CardHolder, color: Int, progress: Int, sparkNorm: Float?, criticalAlert: Boolean) {
-        c.tvValue.setTextColor(color)
-        c.progress.progress = progress
-        c.progress.progressTintList = ColorStateList.valueOf(color)
-        if (sparkNorm != null) c.sparkline.addPoint(sparkNorm, color)
-
-        val th = themes[currentTheme] ?: themes["midnight"]!!
-        val fill = cardFillColor(th)
-        if (criticalAlert && alertPulseToggle) {
-            c.cardRoot.background = makeCardDrawable(Color.argb(215, 70, 16, 18), Color.parseColor("#F85149"), 4)
-        } else {
-            c.cardRoot.background = makeCardDrawable(fill, th.border, 2)
-        }
+        tvLbl.text = lbl; tvLbl.setTextColor(accent)
+        tvVal.text = valStr; tvUnit.text = unit; tvSub.text = sub
+        if (norm != null) spark.addPoint(norm, accent)
+        v.background = makeGlassBlockBg(accent, critical && alertPulseToggle)
     }
 
     private fun optNullableDouble(d: JSONObject, key: String): Double? {
         if (!d.has(key) || d.isNull(key)) return null
         val v = d.optDouble(key, Double.NaN)
         return if (v.isNaN()) null else v
-    }
-
-    private fun openSettingsDialog() {
-        val labels = allMetricIds.map { metricLabels[it] ?: it }.toTypedArray()
-        val checked = BooleanArray(allMetricIds.size) { idx -> allMetricIds[idx] in enabledMetrics }
-
-        AlertDialog.Builder(this)
-            .setTitle("Какие показатели выводить")
-            .setMultiChoiceItems(labels, checked) { _, which, isChecked -> checked[which] = isChecked }
-            .setPositiveButton("Сохранить") { _, _ ->
-                val selected = allMetricIds.filterIndexed { idx, _ -> checked[idx] }
-                if (selected.isNotEmpty()) {
-                    enabledMetrics = selected.toMutableList()
-                    saveMetricsLocally(); rebuildGrid(); lastPayload?.let { updateUi(it) }
-                    sendPost(configUrl, JSONObject().put("enabledMetrics", JSONArray(selected)))
-                }
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
     }
 }

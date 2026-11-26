@@ -21,11 +21,13 @@ static class Program
         using var adb = new AdbBridge(baseDir, port);
         var sessions = new SessionAnalyzer(baseDir);
         var media = new MediaController();
+        using var weather = new WeatherService(config);
         using var obs = new ObsController(config);
         using var server = new TelemetryServer(port, config, sessions, media, adb, obs, baseDir);
 
         fps.Start();
         adb.Start();
+        weather.Start();
         obs.Start();
         server.Start();
 
@@ -35,28 +37,28 @@ static class Program
             while (!cts.Token.IsCancellationRequested)
             {
                 var cfg = config.Current;
-                bool apkExists = File.Exists(apkPath);
-                string? apkStamp = apkExists ? File.GetLastWriteTimeUtc(apkPath).Ticks.ToString() : null;
-
                 var payload = new TelemetryPayload
                 {
                     Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    PcName = Environment.MachineName,
                     UsbConnected = adb.IsConnected,
                     DeviceSerial = adb.DeviceSerial,
                     PresentMonActive = fps.IsRunning,
+                    Weather = weather.Current,
                     ObsConnected = obs.IsConnected,
                     ObsStreaming = obs.IsStreaming,
                     ObsRecording = obs.IsRecording,
                     ObsStreamTime = obs.StreamTimecode,
                     ObsCurrentScene = obs.CurrentScene,
                     ObsScenes = obs.Scenes,
-                    PcApkAvailable = apkExists,
-                    PcApkStamp = apkStamp,
+                    PcApkAvailable = File.Exists(apkPath),
                     WallpaperVersion = server.WallpaperVersion,
                     StandbyMode = cfg.StandbyMode,
                     Theme = cfg.Theme,
                     FontScale = cfg.FontScale,
-                    EnabledMetrics = cfg.EnabledMetrics,
+                    LayoutCols = cfg.LayoutCols,
+                    LayoutRows = cfg.LayoutRows,
+                    LayoutBlocks = cfg.LayoutBlocks,
                     Macros = cfg.Macros
                 };
 
@@ -96,12 +98,12 @@ static class Program
         using var tray = new NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = $"PC Monitor USB v8 (порт {port})",
+            Text = $"PC Monitor USB v9 Bento (порт {port})",
             Visible = true
         };
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Студия экрана и отчёты", null, (_, _) =>
+        menu.Items.Add("Bento-студия экрана и отчёты", null, (_, _) =>
         {
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
         });
@@ -144,8 +146,8 @@ static class Program
             Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
         };
 
-        tray.ShowBalloonTip(2500, "PC Monitor USB v8 запущен",
-            "OBS WebSocket, сеть, кастомный фон и настольные часы готовы.", ToolTipIcon.Info);
+        tray.ShowBalloonTip(2500, "PC Monitor USB v9 Bento запущен",
+            "Открой студию для полного кастома блоков, погоды и цветов.", ToolTipIcon.Info);
 
         Application.Run();
         cts.Cancel();

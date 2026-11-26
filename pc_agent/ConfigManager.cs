@@ -39,7 +39,10 @@ public class ConfigManager
                 var parsed = JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
                 if (parsed is not null)
                 {
-                    if (parsed.EnabledMetrics.Count == 0) parsed.EnabledMetrics = new AppConfig().EnabledMetrics;
+                    if (parsed.LayoutBlocks is null || parsed.LayoutBlocks.Count == 0)
+                        parsed.LayoutBlocks = AppConfig.DefaultTikTokLayout();
+                    if (parsed.LayoutCols is < 2 or > 6) parsed.LayoutCols = 4;
+                    if (parsed.LayoutRows is < 2 or > 5) parsed.LayoutRows = 3;
                     if (parsed.Macros is null || parsed.Macros.Count == 0) parsed.Macros = new AppConfig().Macros;
                     if (!ValidThemes.Contains(parsed.Theme)) parsed.Theme = "midnight";
                     if (parsed.StandbyMode != "auto") parsed.StandbyMode = "off";
@@ -57,23 +60,30 @@ public class ConfigManager
     }
 
     public void UpdateConfig(
-        List<string>? enabledMetrics, string? theme, double? fontScale,
-        List<MacroButton>? macros, string? standbyMode, int? obsPort, string? obsPassword)
+        List<LayoutBlock>? layoutBlocks, int? layoutCols, int? layoutRows,
+        string? theme, double? fontScale, List<MacroButton>? macros,
+        string? standbyMode, string? weatherCity, int? obsPort, string? obsPassword)
     {
         AppConfig updated;
         lock (_lock)
         {
-            if (enabledMetrics is not null)
+            if (layoutCols is >= 2 and <= 6) _config.LayoutCols = layoutCols.Value;
+            if (layoutRows is >= 2 and <= 5) _config.LayoutRows = layoutRows.Value;
+            if (layoutBlocks is not null && layoutBlocks.Count > 0)
             {
-                var validIds = AppConfig.AllMetrics.Select(m => m.Id).ToHashSet();
-                var cleaned = enabledMetrics.Where(id => validIds.Contains(id)).Distinct().ToList();
-                if (cleaned.Count > 0) _config.EnabledMetrics = cleaned;
+                var validTypes = AppConfig.AllBlockTypes.Select(t => t.Id).ToHashSet();
+                var cleaned = layoutBlocks
+                    .Where(b => validTypes.Contains(b.Type) && b.W >= 1 && b.H >= 1)
+                    .Take(16)
+                    .ToList();
+                if (cleaned.Count > 0) _config.LayoutBlocks = cleaned;
             }
             if (theme is not null && ValidThemes.Contains(theme)) _config.Theme = theme;
             if (fontScale is not null && double.IsFinite(fontScale.Value))
                 _config.FontScale = Math.Round(Math.Clamp(fontScale.Value, 0.75, 1.45), 2);
             if (macros is not null && macros.Count > 0) _config.Macros = macros.Take(9).ToList();
             if (standbyMode is "off" or "auto") _config.StandbyMode = standbyMode;
+            if (weatherCity is not null) _config.WeatherCity = weatherCity.Trim();
             if (obsPort is > 100 and < 65536) _config.ObsPort = obsPort.Value;
             if (obsPassword is not null) _config.ObsPassword = obsPassword;
 
