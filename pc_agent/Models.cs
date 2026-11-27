@@ -2,6 +2,14 @@ using System.Text.Json.Serialization;
 
 namespace PCMonitorAgent;
 
+public class AudioAppSession
+{
+    [JsonPropertyName("pid")] public int Pid { get; set; }
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("volume")] public int Volume { get; set; }
+    [JsonPropertyName("muted")] public bool Muted { get; set; }
+}
+
 public class MacroButton
 {
     [JsonPropertyName("id")] public string Id { get; set; } = "";
@@ -18,6 +26,7 @@ public class LayoutBlock
     [JsonPropertyName("w")] public int W { get; set; } = 1;
     [JsonPropertyName("h")] public int H { get; set; } = 1;
     [JsonPropertyName("color")] public string Color { get; set; } = "#38BDF8";
+    [JsonPropertyName("style")] public string Style { get; set; } = "spark";
 }
 
 public class AppConfig
@@ -27,6 +36,7 @@ public class AppConfig
     [JsonPropertyName("theme")] public string Theme { get; set; } = "midnight";
     [JsonPropertyName("fontScale")] public double FontScale { get; set; } = 1.0;
     [JsonPropertyName("standbyMode")] public string StandbyMode { get; set; } = "off";
+    [JsonPropertyName("autoSwitchModes")] public bool AutoSwitchModes { get; set; } = false;
     [JsonPropertyName("weatherCity")] public string WeatherCity { get; set; } = "";
     [JsonPropertyName("obsPort")] public int ObsPort { get; set; } = 4455;
     [JsonPropertyName("obsPassword")] public string ObsPassword { get; set; } = "";
@@ -126,7 +136,10 @@ public class AppConfig
         new("cpu_clock", "Частота CPU", "МГц", "Частота ядер процессора"),
         new("gpu_clock", "Частота GPU", "МГц", "Частота ядра видеокарты"),
         new("obs_live", "OBS Статус", "", "Статус эфира/записи и текущая сцена OBS"),
-        new("oc_controls", "🔥 Разгон GPU", "", "Кнопки разгона NVIDIA (Сток / Мягкий / Стандарт / Экстрим)")
+        new("oc_controls", "🔥 Разгон GPU", "", "Кнопки разгона NVIDIA (Сток / Мягкий / Стандарт / Экстрим)"),
+        new("gpu_fan", "Кулер GPU", "%", "Обороты вентиляторов видеокарты (% и RPM)"),
+        new("gpu_hotspot", "GPU Hotspot", "°C", "Температура самой горячей точки чипа GPU"),
+        new("ssd_temp", "Темп. SSD", "°C", "Температура системного NVMe/SSD накопителя")
     };
 }
 
@@ -156,6 +169,7 @@ public class TelemetryPayload
     [JsonPropertyName("deviceSerial")] public string? DeviceSerial { get; set; }
     [JsonPropertyName("presentMonActive")] public bool PresentMonActive { get; set; }
     [JsonPropertyName("activeGame")] public string? ActiveGame { get; set; }
+    [JsonPropertyName("gamePlaytime")] public string? GamePlaytime { get; set; }
     [JsonPropertyName("fps")] public int? Fps { get; set; }
     [JsonPropertyName("fps1Low")] public int? Fps1Low { get; set; }
 
@@ -167,6 +181,10 @@ public class TelemetryPayload
     [JsonPropertyName("cpuClock")] public double? CpuClock { get; set; }
     [JsonPropertyName("gpuLoad")] public double? GpuLoad { get; set; }
     [JsonPropertyName("gpuTemp")] public double? GpuTemp { get; set; }
+    [JsonPropertyName("gpuHotspot")] public double? GpuHotspot { get; set; }
+    [JsonPropertyName("gpuFanPct")] public double? GpuFanPct { get; set; }
+    [JsonPropertyName("gpuFanRpm")] public double? GpuFanRpm { get; set; }
+    [JsonPropertyName("ssdTemp")] public double? SsdTemp { get; set; }
     [JsonPropertyName("gpuPower")] public double? GpuPower { get; set; }
     [JsonPropertyName("gpuClock")] public double? GpuClock { get; set; }
     [JsonPropertyName("gpuVramUsedGb")] public double? GpuVramUsedGb { get; set; }
@@ -202,6 +220,7 @@ public class TelemetryPayload
     [JsonPropertyName("pcApkAvailable")] public bool PcApkAvailable { get; set; }
     [JsonPropertyName("wallpaperVersion")] public int WallpaperVersion { get; set; }
     [JsonPropertyName("standbyMode")] public string StandbyMode { get; set; } = "off";
+    [JsonPropertyName("autoSwitchModes")] public bool AutoSwitchModes { get; set; } = false;
     [JsonPropertyName("theme")] public string Theme { get; set; } = "midnight";
     [JsonPropertyName("fontScale")] public double FontScale { get; set; } = 1.0;
 
@@ -210,4 +229,5 @@ public class TelemetryPayload
     [JsonPropertyName("activePreset")] public string ActivePreset { get; set; } = "tiktok";
     [JsonPropertyName("layoutBlocks")] public List<LayoutBlock> LayoutBlocks { get; set; } = new();
     [JsonPropertyName("macros")] public List<MacroButton> Macros { get; set; } = new();
+    [JsonPropertyName("audioSessions")] public List<AudioAppSession> AudioSessions { get; set; } = new();
 }

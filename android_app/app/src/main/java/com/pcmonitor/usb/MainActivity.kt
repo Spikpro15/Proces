@@ -8,6 +8,10 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.graphics.drawable.AnimatedImageDrawable
+import android.widget.SeekBar
+import java.nio.ByteBuffer
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
@@ -61,6 +65,7 @@ class MainActivity : AppCompatActivity() {
     private val updateApkUrl = "http://127.0.0.1:8765/api/update-apk"
     private val presetUrl = "http://127.0.0.1:8765/api/preset"
     private val ocUrl = "http://127.0.0.1:8765/api/oc"
+    private val audioUrl = "http://127.0.0.1:8765/api/audio"
 
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -74,6 +79,9 @@ class MainActivity : AppCompatActivity() {
     private var orientationMode = 0
     private var isMediaOpen = false
     private var isMacroOpen = false
+    private var isMixerOpen = false
+    private val smartTapModes = mutableMapOf<String, Int>()
+    private var lastAudioSignature = ""
     private var isStandbyOpen = false
     private var manualStandbyOverride = false
     private var lastArtVersion = -1
@@ -97,7 +105,7 @@ class MainActivity : AppCompatActivity() {
         "cyber"    to ThemeColors(Color.parseColor("#22103B"), Color.parseColor("#08050F"), Color.parseColor("#160E26"), Color.parseColor("#3D2566"), Color.parseColor("#D946EF"))
     )
 
-    private data class BentoBlock(val id: String, val type: String, val x: Int, val y: Int, val w: Int, val h: Int, val colorHex: String)
+    private data class BentoBlock(val id: String, val type: String, val x: Int, val y: Int, val w: Int, val h: Int, val colorHex: String, val style: String = "spark")
     private var layoutCols = 4
     private var layoutRows = 3
     private var layoutBlocks: List<BentoBlock> = listOf(
@@ -158,6 +166,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnObsRecord: TextView
     private lateinit var obsScenesRow: LinearLayout
     private lateinit var macroGrid: GridLayout
+    private lateinit var mixerOverlay: View
+    private lateinit var mixerList: LinearLayout
 
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val secFmt = SimpleDateFormat("ss", Locale.getDefault())
@@ -231,6 +241,8 @@ class MainActivity : AppCompatActivity() {
         btnObsRecord = findViewById(R.id.btnObsRecord)
         obsScenesRow = findViewById(R.id.obsScenesRow)
         macroGrid = findViewById(R.id.macroGrid)
+        mixerOverlay = findViewById(R.id.mixerOverlay)
+        mixerList = findViewById(R.id.mixerList)
 
         ivMediaArt.clipToOutline = true
         ivMediaArt.outlineProvider = roundOutline(36f)
@@ -246,6 +258,8 @@ class MainActivity : AppCompatActivity() {
         }
         standbyOverlay.setOnClickListener { manualStandbyOverride = true; setStandbyVisible(false) }
         findViewById<View>(R.id.btnMacros).setOnClickListener { showMacroOverlay(true) }
+        findViewById<View>(R.id.btnMixer).setOnClickListener { showMixerOverlay(true) }
+        findViewById<View>(R.id.btnCloseMixer).setOnClickListener { showMixerOverlay(false) }
         findViewById<View>(R.id.btnCloseMacros).setOnClickListener { showMacroOverlay(false) }
         tvMiniMedia.setOnClickListener { showMediaOverlay(true) }
         findViewById<View>(R.id.btnCloseMedia).setOnClickListener { showMediaOverlay(false) }
@@ -399,6 +413,14 @@ class MainActivity : AppCompatActivity() {
                     val v = inflater.inflate(R.layout.block_metric, metricsGrid, false)
                     v.findViewById<TextView>(R.id.tvBlkLabel).setTextColor(accent)
                     v.findViewById<TextView>(R.id.tvBlkVal).setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f * currentFontScale)
+                    val useGauge = b.style == "gauge"
+                    v.findViewById<View>(R.id.blkSpark).visibility = if (useGauge) View.GONE else View.VISIBLE
+                    v.findViewById<View>(R.id.blkGauge).visibility = if (useGauge) View.VISIBLE else View.GONE
+                    v.setOnClickListener {
+                        it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        smartTapModes[b.id] = ((smartTapModes[b.id] ?: 0) + 1) % 3
+                        lastPayload?.let { pl -> updateUi(pl) }
+                    }
                     v
                 }
             }
@@ -463,6 +485,22 @@ class MainActivity : AppCompatActivity() {
                     if (res.code == 200) {
                         val bytes = res.body?.bytes()
                         if (bytes != null && bytes.isNotEmpty()) {
+                            val isGif = bytes.size > 6 && bytes[0] == 0x47.toByte() && bytes[1] == 0x49.toByte() && bytes[2] == 0x46.toByte()
+                            if (isGif && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                try {
+                                    val src = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
+                                    val drw = ImageDecoder.decodeDrawable(src)
+                                    mainHandler.post {
+                                        hasCustomWallpaper = true
+                                        ivCustomBg.setImageDrawable(drw)
+                                        if (drw is AnimatedImageDrawable) drw.start()
+                                        ivCustomBg.visibility = View.VISIBLE
+                                        customBgScrim.visibility = View.VISIBLE
+                                        applyTheme()
+                                    }
+                                    return
+                                } catch (_: Exception) {}
+                            }
                             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                             if (bmp != null) {
                                 mainHandler.post {
@@ -536,6 +574,103 @@ class MainActivity : AppCompatActivity() {
             mediaOverlay.animate().translationY(0f).setDuration(240).start()
         } else {
             mediaOverlay.animate().translationY(h).setDuration(200).withEndAction { mediaOverlay.visibility = View.GONE }.start()
+        }
+    }
+
+
+    private fun showMixerOverlay(show: Boolean) {
+        if (show == isMixerOpen) return
+        isMixerOpen = show
+        if (show) {
+            mixerOverlay.alpha = 0f
+            mixerOverlay.visibility = View.VISIBLE
+            mixerOverlay.animate().alpha(1f).setDuration(200).start()
+        } else {
+            mixerOverlay.animate().alpha(0f).setDuration(180).withEndAction {
+                mixerOverlay.visibility = View.GONE
+            }.start()
+        }
+    }
+
+    private fun updateAudioMixer(d: JSONObject) {
+        val arr = d.optJSONArray("audioSessions") ?: return
+        val sig = arr.toString()
+        if (sig == lastAudioSignature) return
+        lastAudioSignature = sig
+
+        mixerList.removeAllViews()
+        val th = themes[currentTheme] ?: themes["midnight"]!!
+        if (arr.length() == 0) {
+            val empty = TextView(this).apply {
+                text = "Нет активных приложений со звуком"
+                setTextColor(Color.parseColor("#8B949E"))
+                setPadding(16, 24, 16, 24)
+            }
+            mixerList.addView(empty)
+            return
+        }
+
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val pid = o.optInt("pid")
+            val name = o.optString("name", "App")
+            val vol = o.optInt("volume", 100)
+            val muted = o.optBoolean("muted", false)
+
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                background = makeGlassBlockBg(th.accent)
+                setPadding(24, 16, 24, 16)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 14 }
+            }
+
+            val tvName = TextView(this).apply {
+                text = name
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                layoutParams = LinearLayout.LayoutParams(200, LinearLayout.LayoutParams.WRAP_CONTENT)
+            }
+
+            val tvPct = TextView(this).apply {
+                text = if (muted) "MUTE" else "$vol%"
+                setTextColor(if (muted) Color.parseColor("#F85149") else th.accent)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                layoutParams = LinearLayout.LayoutParams(100, LinearLayout.LayoutParams.WRAP_CONTENT)
+            }
+
+            val seek = SeekBar(this).apply {
+                max = 100
+                progress = vol
+                progressTintList = ColorStateList.valueOf(th.accent)
+                thumbTintList = ColorStateList.valueOf(th.accent)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                        if (fromUser) tvPct.text = "$progress%"
+                    }
+                    override fun onStartTrackingTouch(sb: SeekBar?) {}
+                    override fun onStopTrackingTouch(sb: SeekBar?) {
+                        val p = sb?.progress ?: return
+                        sendPost(audioUrl, JSONObject().put("pid", pid).put("volume", p).put("muted", false))
+                    }
+                })
+            }
+
+            val btnMute = TextView(this).apply {
+                text = if (muted) "🔇" else "🔊"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                setPadding(20, 6, 6, 6)
+                setOnClickListener { v ->
+                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    sendPost(audioUrl, JSONObject().put("pid", pid).put("muted", !muted))
+                }
+            }
+
+            row.addView(tvName); row.addView(seek); row.addView(tvPct); row.addView(btnMute)
+            mixerList.addView(row)
         }
     }
 
@@ -854,7 +989,7 @@ class MainActivity : AppCompatActivity() {
                         type = o.optString("type", "cpu"),
                         x = o.optInt("x", 0), y = o.optInt("y", 0),
                         w = o.optInt("w", 1), h = o.optInt("h", 1),
-                        colorHex = o.optString("color", "#38BDF8")
+                        colorHex = o.optString("color", "#38BDF8"), style = o.optString("style", "spark")
                     ))
                 }
                 if (list.isNotEmpty()) { layoutBlocks = list; rebuildBentoGrid() }
@@ -883,7 +1018,9 @@ class MainActivity : AppCompatActivity() {
 
         val game = d.optString("activeGame", "")
         val hasGame = game.isNotEmpty() && game != "null" && !d.isNull("fps")
-        tvGameName.text = if (game.isNotEmpty() && game != "null") "Игра: $game" else ""
+        val pt = if (d.isNull("gamePlaytime")) "" else d.optString("gamePlaytime", "")
+        tvGameName.text = if (game.isNotEmpty() && game != "null") (if (pt.isNotEmpty()) "$game · $pt" else "Игра: $game") else ""
+        updateAudioMixer(d)
 
         if (hasGame) {
             lastGameSeenMs = System.currentTimeMillis(); manualStandbyOverride = false
@@ -989,6 +1126,8 @@ class MainActivity : AppCompatActivity() {
         val tvUnit = v.findViewById<TextView>(R.id.tvBlkUnit) ?: return
         val tvSub = v.findViewById<TextView>(R.id.tvBlkSub) ?: return
         val spark = v.findViewById<SparklineView>(R.id.blkSpark) ?: return
+        val gauge = v.findViewById<GaugeView>(R.id.blkGauge)
+        val tapMode = smartTapModes[b.id] ?: 0
 
         var lbl = b.type.uppercase(); var valStr = "--"; var unit = ""; var sub = ""
         var norm: Float? = null; var critical = false
@@ -996,9 +1135,14 @@ class MainActivity : AppCompatActivity() {
         when (b.type) {
             "cpu" -> {
                 val load = optNullableDouble(d, "cpuLoad"); val temp = optNullableDouble(d, "cpuTemp")
-                lbl = "CPU"
-                if (load != null) { valStr = load.roundToInt().toString(); unit = "%"; norm = (load / 100.0).toFloat() }
-                sub = (if (temp != null) "${temp.roundToInt()}°C · " else "") + d.optString("cpuName", "")
+                if (tapMode % 2 == 1 && temp != null) {
+                    lbl = "CPU TEMP"; valStr = temp.roundToInt().toString(); unit = "°C"; norm = (temp / 100.0).toFloat()
+                    sub = if (load != null) "Загрузка ${load.roundToInt()}%" else ""
+                } else {
+                    lbl = "CPU"
+                    if (load != null) { valStr = load.roundToInt().toString(); unit = "%"; norm = (load / 100.0).toFloat() }
+                    sub = (if (temp != null) "${temp.roundToInt()}°C · " else "") + d.optString("cpuName", "")
+                }
                 critical = (temp != null && temp >= 86.0)
             }
             "gpu" -> {
@@ -1013,10 +1157,15 @@ class MainActivity : AppCompatActivity() {
             }
             "ram" -> {
                 val pct = optNullableDouble(d, "ramLoad"); val used = optNullableDouble(d, "ramUsedGb"); val total = optNullableDouble(d, "ramTotalGb")
-                lbl = if (pct != null) "RAM (${pct.roundToInt()}%)" else "RAM"
-                if (used != null) { valStr = String.format("%.1f", used); unit = "ГБ" }
+                if (tapMode % 2 == 1 && pct != null) {
+                    lbl = "RAM"; valStr = pct.roundToInt().toString(); unit = "%"
+                    if (used != null && total != null) sub = "${String.format("%.1f", used)} / ${String.format("%.0f", total)} ГБ"
+                } else {
+                    lbl = if (pct != null) "RAM (${pct.roundToInt()}%)" else "RAM"
+                    if (used != null) { valStr = String.format("%.1f", used); unit = "ГБ" }
+                    if (used != null && total != null) sub = "${String.format("%.1f", used)} / ${String.format("%.0f", total)} ГБ"
+                }
                 if (pct != null) norm = (pct / 100.0).toFloat()
-                if (used != null && total != null) sub = "${String.format("%.1f", used)} / ${String.format("%.0f", total)} ГБ"
                 critical = (pct != null && pct >= 94.0)
             }
             "fps" -> {
@@ -1029,8 +1178,30 @@ class MainActivity : AppCompatActivity() {
             "network" -> {
                 val up = optNullableDouble(d, "netUpMbps"); val down = optNullableDouble(d, "netDownMbps")
                 lbl = "NETWORK"
-                if (up != null) { valStr = "↑${String.format("%.1f", up)}"; unit = "Мбит"; norm = (up / 50.0).toFloat() }
-                if (down != null) sub = "↓ ${String.format("%.1f", down)} Мбит/с"
+                if (tapMode % 2 == 1 && up != null) {
+                    val upKb = up * 125.0; val dnKb = (down ?: 0.0) * 125.0
+                    valStr = "↑${upKb.roundToInt()}"; unit = "КБ/с"; norm = (up / 50.0).toFloat()
+                    sub = "↓ ${dnKb.roundToInt()} КБ/с"
+                } else {
+                    if (up != null) { valStr = "↑${String.format("%.1f", up)}"; unit = "Мбит"; norm = (up / 50.0).toFloat() }
+                    if (down != null) sub = "↓ ${String.format("%.1f", down)} Мбит/с"
+                }
+            }
+            "gpu_fan" -> {
+                val pct = optNullableDouble(d, "gpuFanPct"); val rpm = optNullableDouble(d, "gpuFanRpm")
+                lbl = "GPU FAN"
+                if (pct != null) { valStr = pct.roundToInt().toString(); unit = "%"; norm = (pct / 100.0).toFloat() }
+                if (rpm != null) sub = "${rpm.roundToInt()} RPM"
+            }
+            "gpu_hotspot" -> {
+                val hs = optNullableDouble(d, "gpuHotspot"); lbl = "HOTSPOT"
+                if (hs != null) { valStr = hs.roundToInt().toString(); unit = "°C"; norm = (hs / 105.0).toFloat(); critical = hs >= 95.0 }
+                sub = "GPU Max Point"
+            }
+            "ssd_temp" -> {
+                val st = optNullableDouble(d, "ssdTemp"); lbl = "SSD TEMP"
+                if (st != null) { valStr = st.roundToInt().toString(); unit = "°C"; norm = (st / 80.0).toFloat(); critical = st >= 70.0 }
+                sub = "NVMe / SATA"
             }
             "cpu_temp" -> {
                 val t = optNullableDouble(d, "cpuTemp"); lbl = "CPU TEMP"
@@ -1073,7 +1244,7 @@ class MainActivity : AppCompatActivity() {
 
         tvLbl.text = lbl; tvLbl.setTextColor(accent)
         tvVal.text = valStr; tvUnit.text = unit; tvSub.text = sub
-        if (norm != null) spark.addPoint(norm, accent)
+        if (norm != null) { spark.addPoint(norm, accent); gauge?.setGauge(norm, accent) }
         v.background = makeGlassBlockBg(accent, critical && alertPulseToggle)
     }
 

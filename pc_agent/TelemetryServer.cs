@@ -90,6 +90,30 @@ public sealed class TelemetryServer : IDisposable
 
 
 
+
+        if (path == "/api/audio" && req.HttpMethod == "GET")
+        {
+            await WriteJsonAsync(res, JsonSerializer.Serialize(AudioMixerController.GetActiveSessions()));
+            return;
+        }
+
+        if (path == "/api/audio" && req.HttpMethod == "POST")
+        {
+            using var reader = new StreamReader(req.InputStream, Encoding.UTF8);
+            var body = await reader.ReadToEndAsync(ct);
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                int pid = doc.RootElement.GetProperty("pid").GetInt32();
+                int? vol = doc.RootElement.TryGetProperty("volume", out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : null;
+                bool? mut = doc.RootElement.TryGetProperty("muted", out var m) && (m.ValueKind == JsonValueKind.True || m.ValueKind == JsonValueKind.False) ? m.GetBoolean() : null;
+                bool ok = AudioMixerController.SetAppAudio(pid, vol, mut);
+                await WriteJsonAsync(res, ok ? "{\"ok\":true}" : "{\"ok\":false}");
+            }
+            catch { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
+            return;
+        }
+
         if (path == "/api/oc" && req.HttpMethod == "POST")
         {
             using var reader = new StreamReader(req.InputStream, Encoding.UTF8);
@@ -131,9 +155,10 @@ public sealed class TelemetryServer : IDisposable
         {
             if (File.Exists(_wallpaperPath))
             {
-                res.ContentType = "image/jpeg";
-                res.Headers.Add("Cache-Control", "no-store");
                 var bytes = await File.ReadAllBytesAsync(_wallpaperPath, ct);
+                bool isGif = bytes.Length > 6 && bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46;
+                res.ContentType = isGif ? "image/gif" : "image/jpeg";
+                res.Headers.Add("Cache-Control", "no-store");
                 await res.OutputStream.WriteAsync(bytes, ct);
                 res.Close();
             }
@@ -284,6 +309,7 @@ public sealed class TelemetryServer : IDisposable
                 theme = cfg.Theme,
                 fontScale = cfg.FontScale,
                 standbyMode = cfg.StandbyMode,
+                autoSwitchModes = cfg.AutoSwitchModes,
                 weatherCity = cfg.WeatherCity,
                 obsPort = cfg.ObsPort,
                 obsPassword = cfg.ObsPassword,
@@ -312,6 +338,7 @@ public sealed class TelemetryServer : IDisposable
                 string? theme = root.TryGetProperty("theme", out var th) ? th.GetString() : null;
                 double? fontScale = root.TryGetProperty("fontScale", out var fs) && fs.ValueKind == JsonValueKind.Number ? fs.GetDouble() : null;
                 string? standby = root.TryGetProperty("standbyMode", out var sb) ? sb.GetString() : null;
+                bool? autoSw = root.TryGetProperty("autoSwitchModes", out var asw) && (asw.ValueKind == JsonValueKind.True || asw.ValueKind == JsonValueKind.False) ? asw.GetBoolean() : null;
                 string? city = root.TryGetProperty("weatherCity", out var wc) ? wc.GetString() : null;
                 int? obsPort = root.TryGetProperty("obsPort", out var op) && op.ValueKind == JsonValueKind.Number ? op.GetInt32() : null;
                 string? obsPass = root.TryGetProperty("obsPassword", out var opw) ? opw.GetString() : null;
@@ -320,7 +347,7 @@ public sealed class TelemetryServer : IDisposable
                 if (root.TryGetProperty("macros", out var mc) && mc.ValueKind == JsonValueKind.Array)
                     macros = JsonSerializer.Deserialize<List<MacroButton>>(mc.GetRawText());
 
-                _config.UpdateConfig(blocks, cols, rows, theme, fontScale, macros, standby, city, obsPort, obsPass);
+                _config.UpdateConfig(blocks, cols, rows, theme, fontScale, macros, standby, autoSw, city, obsPort, obsPass);
                 await WriteJsonAsync(res, "{\"ok\":true}");
             }
             catch { res.StatusCode = 400; await WriteJsonAsync(res, "{\"ok\":false}"); }
@@ -495,6 +522,10 @@ public sealed class TelemetryServer : IDisposable
       <input type="file" id="bgFile" accept="image/*" style="display:none" onchange="uploadBg(this)">
       <button class="btn" onclick="document.getElementById('bgFile').click()">🖼 Свой фон</button>
       <button class="btn" onclick="clearBg()">Убрать фон</button>
+      <button class="btn" onclick="exportLayout()">📤 Экспорт JSON</button>
+      <input type="file" id="impFile" accept=".json" style="display:none" onchange="importLayout(this)">
+      <button class="btn" onclick="document.getElementById('impFile').click()">📥 Импорт JSON</button>
+      <button class="btn" id="autoSwBtn" onclick="toggleAutoSwitch()">Авто-режимы: Выкл</button>
       <button class="btn" id="standbyBtn" onclick="toggleStandby()">Часы вне игры: Выкл</button>
     </div>
   </div>
@@ -548,11 +579,11 @@ const DEFAULT_COLORS = {
   clock_weather:'#38BDF8', media_player:'#38BDF8', fps:'#F59E0B', cpu:'#22D3EE',
   gpu:'#84CC16', ram:'#A78BFA', network:'#FB923C', cpu_temp:'#F43F5E',
   gpu_temp:'#10B981', gpu_vram:'#C084FC', cpu_power:'#60A5FA', gpu_power:'#E879F9',
-  cpu_clock:'#38BDF8', gpu_clock:'#A855F7', obs_live:'#EF4444', oc_controls:'#F97316'
+  cpu_clock:'#38BDF8', gpu_clock:'#A855F7', obs_live:'#EF4444', oc_controls:'#F97316', gpu_fan:'#38BDF8', gpu_hotspot:'#FB7185', ssd_temp:'#FBBF24'
 };
 
 let layoutCols = 4, layoutRows = 3, layoutBlocks = [], allBlockTypes = [], macros = [], latestData = {};
-let theme = 'midnight', fontScale = 1.0, standbyMode = 'off', dragBlockId = null, lastBgVer = -1, autoStartOn = false;
+let theme = 'midnight', fontScale = 1.0, standbyMode = 'off', autoSwitchModes = false, dragBlockId = null, lastBgVer = -1, autoStartOn = false;
 const history = {};
 
 async function init() {
@@ -565,6 +596,7 @@ async function init() {
   theme = data.theme || 'midnight';
   fontScale = data.fontScale || 1.0;
   standbyMode = data.standbyMode || 'off';
+  autoSwitchModes = !!data.autoSwitchModes;
   macros = data.macros || [];
 
   document.getElementById('weatherCity').value = data.weatherCity || '';
@@ -573,7 +605,7 @@ async function init() {
   document.getElementById('obsPort').value = data.obsPort || 4455;
   document.getElementById('obsPass').value = data.obsPassword || '';
 
-  updateStandbyBtn(); renderPalette(); renderCanvas(); renderMacros(); pollAutoStart();
+  updateStandbyBtn(); updateAutoSwBtn(); renderPalette(); renderCanvas(); renderMacros(); pollAutoStart();
   setInterval(poll, 800); setInterval(pollSession, 3000);
   poll(); pollSession();
 }
@@ -631,6 +663,36 @@ function resizeBlock(id, dw, dh) {
   }
 }
 
+function toggleBlockStyle(id) {
+  const b = layoutBlocks.find(x => x.id === id); if (!b) return;
+  b.style = b.style === 'gauge' ? 'spark' : 'gauge';
+  renderCanvas(); saveConfig();
+}
+function updateAutoSwBtn() {
+  const b = document.getElementById('autoSwBtn');
+  if (!b) return;
+  b.textContent = autoSwitchModes ? '✓ Авто-режимы: Вкл' : 'Авто-режимы: Выкл';
+  b.classList.toggle('btnOn', autoSwitchModes);
+}
+async function toggleAutoSwitch() { autoSwitchModes = !autoSwitchModes; updateAutoSwBtn(); await saveConfig(); }
+function exportLayout() {
+  const blob = new Blob([JSON.stringify({ layoutCols, layoutRows, layoutBlocks, theme, fontScale, macros }, null, 2)], { type:'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'pcmonitor-layout.json'; a.click();
+}
+async function importLayout(input) {
+  if (!input.files || !input.files[0]) return;
+  try {
+    const obj = JSON.parse(await input.files[0].text());
+    if (obj.layoutCols) layoutCols = obj.layoutCols;
+    if (obj.layoutRows) layoutRows = obj.layoutRows;
+    if (Array.isArray(obj.layoutBlocks) && obj.layoutBlocks.length) layoutBlocks = obj.layoutBlocks;
+    if (obj.theme) theme = obj.theme;
+    if (obj.fontScale) fontScale = obj.fontScale;
+    if (Array.isArray(obj.macros) && obj.macros.length) { macros = obj.macros; renderMacros(); }
+    renderCanvas(); await saveConfig();
+  } catch { alert('Неверный JSON файл'); }
+  input.value = '';
+}
 function recolorBlock(id, color) {
   const b = layoutBlocks.find(x => x.id === id);
   if (!b) return;
@@ -732,6 +794,7 @@ function renderCanvas() {
            ondragend="this.classList.remove('dragging')">
         <div class="blkTools" onclick="event.stopPropagation()">
           <input type="color" class="tColor" value="${b.color}" title="Цвет" onchange="recolorBlock('${b.id}',this.value)">
+          <button class="tBtn" title="График / Кольцо" onclick="toggleBlockStyle('${b.id}')">${b.style==='gauge'?'📈':'◐'}</button>
           <button class="tBtn" title="Узже" onclick="resizeBlock('${b.id}',-1,0)">W-</button>
           <button class="tBtn" title="Шире" onclick="resizeBlock('${b.id}',1,0)">W+</button>
           <button class="tBtn" title="Ниже" onclick="resizeBlock('${b.id}',0,-1)">H-</button>
@@ -849,6 +912,9 @@ function updateValues() {
       else if (b.type === 'cpu_clock') { lbl='CPU CLK'; val = d.cpuClock != null ? Math.round(d.cpuClock)+' МГц' : '--'; num = d.cpuClock; maxV = 5000; }
       else if (b.type === 'gpu_clock') { lbl='GPU CLK'; val = d.gpuClock != null ? Math.round(d.gpuClock)+' МГц' : '--'; num = d.gpuClock; maxV = 3000; }
       else if (b.type === 'obs_live') { lbl='OBS'; val = d.obsStreaming ? 'LIVE' : (d.obsConnected ? 'READY' : 'OFF'); sub = d.obsStreamTime || d.obsCurrentScene || ''; }
+      else if (b.type === 'gpu_fan') { lbl='GPU FAN'; val = d.gpuFanPct != null ? Math.round(d.gpuFanPct)+'%' : '--'; sub = d.gpuFanRpm ? Math.round(d.gpuFanRpm)+' RPM' : ''; num = d.gpuFanPct; }
+      else if (b.type === 'gpu_hotspot') { lbl='HOTSPOT'; val = d.gpuHotspot != null ? Math.round(d.gpuHotspot)+'°C' : '--'; sub = 'GPU Max Point'; num = d.gpuHotspot; }
+      else if (b.type === 'ssd_temp') { lbl='SSD TEMP'; val = d.ssdTemp != null ? Math.round(d.ssdTemp)+'°C' : '--'; sub = 'NVMe / SATA'; num = d.ssdTemp; }
 
       let sparkSvg = '';
       if (num != null && !isNaN(num)) {
@@ -869,7 +935,7 @@ async function saveWeatherCity() { await saveConfig(); setTimeout(poll, 1200); }
 function setTheme(t) { theme = t; saveConfig(); }
 function setFontScale(v) { fontScale = parseFloat(v); document.getElementById('fontVal').textContent = Math.round(fontScale*100)+'%'; saveConfig(); }
 function updateStandbyBtn() { const b = document.getElementById('standbyBtn'); b.textContent = standbyMode === 'auto' ? '✓ Часы вне игры: Авто' : 'Часы вне игры: Выкл'; b.classList.toggle('btnOn', standbyMode === 'auto'); }
-async function toggleStandby() { standbyMode = standbyMode === 'auto' ? 'off' : 'auto'; updateStandbyBtn(); await saveConfig(); }
+async function toggleStandby() { standbyMode = standbyMode === 'auto' ? 'off' : 'auto'; updateStandbyBtn(); updateAutoSwBtn(); await saveConfig(); }
 async function uploadBg(input) { if (!input.files || !input.files[0]) return; await fetch('/api/wallpaper', { method:'POST', body: input.files[0] }); input.value=''; setTimeout(poll, 250); }
 async function clearBg() { await fetch('/api/wallpaper', { method:'DELETE' }); setTimeout(poll, 250); }
 async function ocCmd(profile) { await fetch('/api/oc', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ profile }) }); setTimeout(poll, 250); }
@@ -893,7 +959,7 @@ async function saveConfig() {
   await fetch('/api/config', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
-      layoutCols, layoutRows, layoutBlocks, theme, fontScale, standbyMode, macros,
+      layoutCols, layoutRows, layoutBlocks, theme, fontScale, standbyMode, autoSwitchModes, macros,
       weatherCity: document.getElementById('weatherCity').value.trim(),
       obsPort: parseInt(document.getElementById('obsPort').value || '4455', 10),
       obsPassword: document.getElementById('obsPass').value || ''

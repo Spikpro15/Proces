@@ -62,7 +62,7 @@ public class ConfigManager
     public void UpdateConfig(
         List<LayoutBlock>? layoutBlocks, int? layoutCols, int? layoutRows,
         string? theme, double? fontScale, List<MacroButton>? macros,
-        string? standbyMode, string? weatherCity, int? obsPort, string? obsPassword)
+        string? standbyMode, bool? autoSwitchModes, string? weatherCity, int? obsPort, string? obsPassword)
     {
         AppConfig updated;
         lock (_lock)
@@ -83,6 +83,7 @@ public class ConfigManager
                 _config.FontScale = Math.Round(Math.Clamp(fontScale.Value, 0.75, 1.45), 2);
             if (macros is not null && macros.Count > 0) _config.Macros = macros.Take(9).ToList();
             if (standbyMode is "off" or "auto") _config.StandbyMode = standbyMode;
+            if (autoSwitchModes is not null) _config.AutoSwitchModes = autoSwitchModes.Value;
             if (weatherCity is not null) _config.WeatherCity = weatherCity.Trim();
             if (obsPort is > 100 and < 65536) _config.ObsPort = obsPort.Value;
             if (obsPassword is not null) _config.ObsPassword = obsPassword;

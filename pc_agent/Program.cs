@@ -33,6 +33,10 @@ static class Program
         server.Start();
 
         var cts = new CancellationTokenSource();
+        long lastAudioTick = 0;
+        var cachedAudio = new List<AudioAppSession>();
+        string lastAutoState = "idle";
+        long lastActivityTick = Environment.TickCount64;
         var loopTask = Task.Run(async () =>
         {
             while (!cts.Token.IsCancellationRequested)
@@ -99,7 +103,32 @@ static class Program
                 }
                 catch { }
 
-                try { sessions.OnTick(payload, activePid); } catch { }
+                try { sessions.OnTick(payload, activePid); payload.GamePlaytime = sessions.ActivePlaytimeText; } catch { }
+
+                // Poll WASAPI per-app audio sessions every ~1.5s
+                long nowTick = Environment.TickCount64;
+                if (nowTick - lastAudioTick > 1500)
+                {
+                    lastAudioTick = nowTick;
+                    try { cachedAudio = AudioMixerController.GetActiveSessions(); } catch { }
+                }
+                payload.AudioSessions = cachedAudio;
+
+                // Auto-switch preset based on OBS streaming / active game / idle
+                if (cfg.AutoSwitchModes)
+                {
+                    string desiredState = obs.IsStreaming ? "stream"
+                        : (payload.Fps is not null && !string.IsNullOrEmpty(payload.ActiveGame)) ? "game" : "idle";
+
+                    if (desiredState != "idle") lastActivityTick = nowTick;
+
+                    if (desiredState != lastAutoState)
+                    {
+                        if (desiredState == "stream") { lastAutoState = "stream"; config.ApplyPreset("streamer"); }
+                        else if (desiredState == "game") { lastAutoState = "game"; config.ApplyPreset("gamer"); }
+                        else if (nowTick - lastActivityTick > 15000) { lastAutoState = "idle"; config.ApplyPreset("tiktok"); }
+                    }
+                }
                 try { await server.BroadcastAsync(payload); } catch { }
 
                 try { await Task.Delay(cfg.RefreshMs, cts.Token); }

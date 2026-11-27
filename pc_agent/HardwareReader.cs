@@ -24,7 +24,7 @@ public sealed class HardwareReader : IDisposable
                 IsMotherboardEnabled = false,
                 IsControllerEnabled = false,
                 IsNetworkEnabled = false,
-                IsStorageEnabled = false
+                IsStorageEnabled = true
             };
             _computer.Open();
         }
@@ -60,6 +60,9 @@ public sealed class HardwareReader : IDisposable
                             break;
                         case HardwareType.Memory:
                             ReadMemory(hw, payload);
+                            break;
+                        case HardwareType.Storage:
+                            ReadStorage(hw, payload);
                             break;
                     }
                 }
@@ -143,8 +146,21 @@ public sealed class HardwareReader : IDisposable
 
             if (s.SensorType == SensorType.Load && s.Name.Equals("GPU Core", StringComparison.OrdinalIgnoreCase))
                 payload.GpuLoad = Math.Round(val, 1);
-            else if (s.SensorType == SensorType.Temperature && s.Name.Equals("GPU Core", StringComparison.OrdinalIgnoreCase))
-                payload.GpuTemp = Math.Round(val, 1);
+            else if (s.SensorType == SensorType.Temperature)
+            {
+                if (s.Name.Equals("GPU Core", StringComparison.OrdinalIgnoreCase))
+                    payload.GpuTemp = Math.Round(val, 1);
+                else if (s.Name.Contains("Hot Spot", StringComparison.OrdinalIgnoreCase) || s.Name.Contains("Hotspot", StringComparison.OrdinalIgnoreCase))
+                    payload.GpuHotspot = Math.Round(val, 1);
+            }
+            else if (s.SensorType == SensorType.Control && s.Name.Contains("Fan", StringComparison.OrdinalIgnoreCase))
+            {
+                if (payload.GpuFanPct is null || val > payload.GpuFanPct) payload.GpuFanPct = Math.Round(val, 0);
+            }
+            else if (s.SensorType == SensorType.Fan && s.Name.Contains("Fan", StringComparison.OrdinalIgnoreCase))
+            {
+                if (payload.GpuFanRpm is null || val > payload.GpuFanRpm) payload.GpuFanRpm = Math.Round(val, 0);
+            }
             else if (s.SensorType == SensorType.Power && s.Name.Contains("Package", StringComparison.OrdinalIgnoreCase))
                 payload.GpuPower = Math.Round(val, 1);
             else if (s.SensorType == SensorType.Clock && s.Name.Equals("GPU Core", StringComparison.OrdinalIgnoreCase))
@@ -158,6 +174,20 @@ public sealed class HardwareReader : IDisposable
 
         if (vramUsedMb is not null) payload.GpuVramUsedGb = Math.Round(vramUsedMb.Value / 1024.0, 2);
         if (vramTotalMb is not null) payload.GpuVramTotalGb = Math.Round(vramTotalMb.Value / 1024.0, 2);
+    }
+
+    private static void ReadStorage(IHardware hw, TelemetryPayload payload)
+    {
+        foreach (var s in hw.Sensors)
+        {
+            if (s.Value is null || !float.IsFinite(s.Value.Value)) continue;
+            if (s.SensorType == SensorType.Temperature && s.Value.Value > 0 && s.Value.Value < 120)
+            {
+                double val = Math.Round((double)s.Value.Value, 0);
+                if (payload.SsdTemp is null || val > payload.SsdTemp)
+                    payload.SsdTemp = val;
+            }
+        }
     }
 
     private static void ReadMemory(IHardware hw, TelemetryPayload payload)
@@ -189,7 +219,7 @@ public sealed class HardwareReader : IDisposable
             var psi = new ProcessStartInfo
             {
                 FileName = "nvidia-smi",
-                Arguments = "--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,clocks.gr --format=csv,noheader,nounits",
+                Arguments = "--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,clocks.gr,fan.speed --format=csv,noheader,nounits",
                 UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true
             };
             using var proc = Process.Start(psi);
@@ -207,6 +237,7 @@ public sealed class HardwareReader : IDisposable
             if (payload.GpuVramTotalGb is null && TryD(parts[4], out var vt)) payload.GpuVramTotalGb = Math.Round(vt / 1024.0, 2);
             if (parts.Length > 5 && payload.GpuPower is null && TryD(parts[5], out var pw)) payload.GpuPower = Math.Round(pw, 1);
             if (parts.Length > 6 && payload.GpuClock is null && TryD(parts[6], out var clk)) payload.GpuClock = Math.Round(clk, 0);
+            if (parts.Length > 7 && payload.GpuFanPct is null && TryD(parts[7], out var fan)) payload.GpuFanPct = Math.Round(fan, 0);
         }
         catch { }
     }
