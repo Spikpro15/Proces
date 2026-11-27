@@ -2,7 +2,6 @@ package com.pcmonitor.usb
 
 import android.app.AlertDialog
 import android.content.Intent
-import android.app.AlertDialog
 import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
