@@ -2,6 +2,12 @@ using System.Text.Json.Serialization;
 
 namespace PCMonitorAgent;
 
+public class TopProcessItem
+{
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("ramGb")] public double RamGb { get; set; }
+}
+
 public class AudioAppSession
 {
     [JsonPropertyName("pid")] public int Pid { get; set; }
@@ -77,7 +83,16 @@ public class AppConfig
 
     public static (int Cols, int Rows, List<LayoutBlock> Blocks) GetPreset(string name) => name switch
     {
-                "oc" => (4, 3, new List<LayoutBlock>
+                        "gauges" => (4, 3, new List<LayoutBlock>
+        {
+            new() { Id = "rg1", Type = "clock_weather", X = 0, Y = 0, W = 2, H = 2, Color = "#38BDF8", Style = "spark" },
+            new() { Id = "rg2", Type = "media_player",  X = 2, Y = 0, W = 2, H = 2, Color = "#38BDF8", Style = "spark" },
+            new() { Id = "rg3", Type = "cpu",           X = 0, Y = 2, W = 1, H = 1, Color = "#22D3EE", Style = "gauge" },
+            new() { Id = "rg4", Type = "gpu",           X = 1, Y = 2, W = 1, H = 1, Color = "#84CC16", Style = "gauge" },
+            new() { Id = "rg5", Type = "ram",           X = 2, Y = 2, W = 1, H = 1, Color = "#A78BFA", Style = "gauge" },
+            new() { Id = "rg6", Type = "fps",           X = 3, Y = 2, W = 1, H = 1, Color = "#F59E0B", Style = "gauge" }
+        }),
+        "oc" => (4, 3, new List<LayoutBlock>
         {
             new() { Id = "o1", Type = "oc_controls", X = 0, Y = 0, W = 2, H = 2, Color = "#F97316" },
             new() { Id = "o2", Type = "gpu_clock",   X = 2, Y = 0, W = 1, H = 1, Color = "#38BDF8" },
@@ -139,7 +154,9 @@ public class AppConfig
         new("oc_controls", "🔥 Разгон GPU", "", "Кнопки разгона NVIDIA (Сток / Мягкий / Стандарт / Экстрим)"),
         new("gpu_fan", "Кулер GPU", "%", "Обороты вентиляторов видеокарты (% и RPM)"),
         new("gpu_hotspot", "GPU Hotspot", "°C", "Температура самой горячей точки чипа GPU"),
-        new("ssd_temp", "Темп. SSD", "°C", "Температура системного NVMe/SSD накопителя")
+        new("ssd_temp", "Темп. SSD", "°C", "Температура системного NVMe/SSD накопителя"),
+        new("ping", "Пинг / Jitter", "мс", "Задержка интернета и джиттер в реальном времени"),
+        new("top_procs", "Топ процессов", "ГБ", "Топ-3 процесса по потреблению ОЗУ")
     };
 }
 
@@ -194,6 +211,9 @@ public class TelemetryPayload
     [JsonPropertyName("ramTotalGb")] public double? RamTotalGb { get; set; }
     [JsonPropertyName("netUpMbps")] public double? NetUpMbps { get; set; }
     [JsonPropertyName("netDownMbps")] public double? NetDownMbps { get; set; }
+    [JsonPropertyName("pingMs")] public int? PingMs { get; set; }
+    [JsonPropertyName("jitterMs")] public int? JitterMs { get; set; }
+    [JsonPropertyName("topProcesses")] public List<TopProcessItem> TopProcesses { get; set; } = new();
 
     [JsonPropertyName("weather")] public WeatherSnapshot? Weather { get; set; }
 

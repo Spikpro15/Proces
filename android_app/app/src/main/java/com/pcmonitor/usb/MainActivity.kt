@@ -168,6 +168,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var macroGrid: GridLayout
     private lateinit var mixerOverlay: View
     private lateinit var mixerList: LinearLayout
+    private lateinit var radialMenu: RadialMenuView
 
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val secFmt = SimpleDateFormat("ss", Locale.getDefault())
@@ -243,6 +244,7 @@ class MainActivity : AppCompatActivity() {
         macroGrid = findViewById(R.id.macroGrid)
         mixerOverlay = findViewById(R.id.mixerOverlay)
         mixerList = findViewById(R.id.mixerList)
+        radialMenu = findViewById(R.id.radialMenu)
 
         ivMediaArt.clipToOutline = true
         ivMediaArt.outlineProvider = roundOutline(36f)
@@ -259,6 +261,21 @@ class MainActivity : AppCompatActivity() {
         standbyOverlay.setOnClickListener { manualStandbyOverride = true; setStandbyVisible(false) }
         findViewById<View>(R.id.btnMacros).setOnClickListener { showMacroOverlay(true) }
         findViewById<View>(R.id.btnMixer).setOnClickListener { showMixerOverlay(true) }
+        findViewById<View>(R.id.btnRadialMenu).setOnClickListener { toggleRadialMenu(true) }
+        radialMenu.onDismiss = { toggleRadialMenu(false) }
+        radialMenu.onSectorSelected = { id ->
+            toggleRadialMenu(false)
+            when (id) {
+                "preset_tiktok"   -> sendPost(presetUrl, JSONObject().put("preset", "tiktok"))
+                "preset_gauges"   -> sendPost(presetUrl, JSONObject().put("preset", "gauges"))
+                "preset_gamer"    -> sendPost(presetUrl, JSONObject().put("preset", "gamer"))
+                "preset_streamer" -> sendPost(presetUrl, JSONObject().put("preset", "streamer"))
+                "preset_oc"       -> sendPost(presetUrl, JSONObject().put("preset", "oc"))
+                "open_mixer"      -> showMixerOverlay(true)
+                "open_macros"     -> showMacroOverlay(true)
+                "open_media"      -> showMediaOverlay(true)
+            }
+        }
         findViewById<View>(R.id.btnCloseMixer).setOnClickListener { showMixerOverlay(false) }
         findViewById<View>(R.id.btnCloseMacros).setOnClickListener { showMacroOverlay(false) }
         tvMiniMedia.setOnClickListener { showMediaOverlay(true) }
@@ -269,8 +286,8 @@ class MainActivity : AppCompatActivity() {
             sendPost(presetUrl, JSONObject().put("preset", "next"))
         }
         btnPreset.setOnLongClickListener {
-            val names = arrayOf("✨ Главный (4×3)", "🎮 Игровой (3×2)", "📺 Стример (5×3)", "🔥 Разгон (4×3)")
-            val ids = arrayOf("tiktok", "gamer", "streamer", "oc")
+            val names = arrayOf("✨ Главный (4×3)", "🌀 Кольца (4×3)", "🎮 Игровой (3×2)", "📺 Стример (5×3)", "🔥 Разгон (4×3)")
+            val ids = arrayOf("tiktok", "gauges", "gamer", "streamer", "oc")
             AlertDialog.Builder(this)
                 .setTitle("Выбери режим экрана")
                 .setItems(names) { _, which ->
@@ -577,6 +594,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+
+    private fun toggleRadialMenu(show: Boolean) {
+        if (show) {
+            radialMenu.alpha = 0f
+            radialMenu.scaleX = 0.85f; radialMenu.scaleY = 0.85f
+            radialMenu.visibility = View.VISIBLE
+            radialMenu.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(180).start()
+        } else {
+            radialMenu.animate().alpha(0f).scaleX(0.88f).scaleY(0.88f).setDuration(150).withEndAction {
+                radialMenu.visibility = View.GONE
+            }.start()
+        }
+    }
 
     private fun showMixerOverlay(show: Boolean) {
         if (show == isMixerOpen) return
@@ -960,6 +990,7 @@ class MainActivity : AppCompatActivity() {
         alertPulseToggle = !alertPulseToggle
         btnUpdateApp.visibility = if (d.optBoolean("pcApkAvailable", false)) View.VISIBLE else View.GONE
         btnPreset.text = when (d.optString("activePreset", "tiktok")) {
+            "gauges" -> "🌀 Кольца"
             "gamer" -> "🎮 Игра"
             "streamer" -> "📺 Стрим"
             "oc" -> "🔥 Разгон"
@@ -1202,6 +1233,28 @@ class MainActivity : AppCompatActivity() {
                 val st = optNullableDouble(d, "ssdTemp"); lbl = "SSD TEMP"
                 if (st != null) { valStr = st.roundToInt().toString(); unit = "°C"; norm = (st / 80.0).toFloat(); critical = st >= 70.0 }
                 sub = "NVMe / SATA"
+            }
+            "ping" -> {
+                val pm = if (d.isNull("pingMs")) null else d.optInt("pingMs")
+                val jm = if (d.isNull("jitterMs")) null else d.optInt("jitterMs")
+                lbl = "PING"
+                if (pm != null) { valStr = pm.toString(); unit = "мс"; norm = (pm / 150f); critical = pm >= 120 }
+                sub = if (jm != null) "Jitter ±$jm мс" else "1.1.1.1"
+            }
+            "top_procs" -> {
+                lbl = "ТОП ОЗУ"
+                val arr = d.optJSONArray("topProcesses")
+                if (arr != null && arr.length() > 0) {
+                    val p0 = arr.optJSONObject(0)
+                    valStr = p0?.optString("name", "--") ?: "--"
+                    unit = ""
+                    val lines = mutableListOf<String>()
+                    for (i in 0 until arr.length()) {
+                        val o = arr.optJSONObject(i) ?: continue
+                        lines.add("${o.optString("name")}: ${String.format("%.1f", o.optDouble("ramGb"))}ГБ")
+                    }
+                    sub = lines.joinToString(" · ")
+                }
             }
             "cpu_temp" -> {
                 val t = optNullableDouble(d, "cpuTemp"); lbl = "CPU TEMP"

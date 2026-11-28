@@ -78,6 +78,21 @@
                 android:visibility="gone" />
 
             <TextView
+                android:id="@+id/btnRadialMenu"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:background="@drawable/status_pill_bg"
+                android:paddingLeft="9dp"
+                android:paddingTop="5dp"
+                android:paddingRight="9dp"
+                android:paddingBottom="5dp"
+                android:text="◎ Меню"
+                android:textColor="#38BDF8"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
                 android:id="@+id/btnPreset"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -622,4 +637,11 @@
                 android:orientation="vertical" />
         </ScrollView>
     </LinearLayout>
+
+    <!-- Futuristic Radial Pie Menu Overlay -->
+    <com.pcmonitor.usb.RadialMenuView
+        android:id="@+id/radialMenu"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
 </FrameLayout>

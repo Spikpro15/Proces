@@ -23,6 +23,7 @@ static class Program
         var media = new MediaController();
         using var weather = new WeatherService(config);
         using var obs = new ObsController(config);
+        using var pingMon = new PingMonitor();
         var gpuOc = new GpuOverclockController();
         using var server = new TelemetryServer(port, config, sessions, media, adb, obs, gpuOc, baseDir);
 
@@ -30,6 +31,7 @@ static class Program
         adb.Start();
         weather.Start();
         obs.Start();
+        pingMon.Start();
         server.Start();
 
         var cts = new CancellationTokenSource();
@@ -113,6 +115,9 @@ static class Program
                     try { cachedAudio = AudioMixerController.GetActiveSessions(); } catch { }
                 }
                 payload.AudioSessions = cachedAudio;
+                payload.PingMs = pingMon.PingMs;
+                payload.JitterMs = pingMon.JitterMs;
+                payload.TopProcesses = pingMon.TopProcesses;
 
                 // Auto-switch preset based on OBS streaming / active game / idle
                 if (cfg.AutoSwitchModes)

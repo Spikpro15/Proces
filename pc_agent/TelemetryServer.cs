@@ -406,7 +406,7 @@ public sealed class TelemetryServer : IDisposable
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PC Monitor USB v9 — Bento-студия экрана</title>
+<title>PC Monitor USB v13 — Flagship Bento Studio</title>
 <style>
   * { box-sizing: border-box; }
   body { background:#090d14; color:#e6edf3; font-family:system-ui,-apple-system,sans-serif; margin:0; padding:22px; max-width:1060px; margin:auto; }
@@ -479,7 +479,7 @@ public sealed class TelemetryServer : IDisposable
 </style>
 </head>
 <body>
-  <h1>PC Monitor USB v9 — Bento-студия экрана</h1>
+  <h1>PC Monitor USB v13 — Flagship Bento Studio</h1>
   <div class="sub">Наведи на любой блок в мини-телефоне: тяни мышкой на любую клетку, меняй размер (W± / H±), цвет и добавляй новые виджеты. На телефоне обновляется мгновенно.</div>
 
   <div class="topBar">
@@ -493,6 +493,7 @@ public sealed class TelemetryServer : IDisposable
   <div class="controlsRow">
     <strong>Пресеты:</strong>
     <button class="btn" onclick="applyPreset('tiktok')">✨ Стиль TikTok (4×3)</button>
+    <button class="btn" onclick="applyPreset('gauges')">🌀 Кольца (4×3)</button>
     <button class="btn" onclick="applyPreset('gamer')">🎮 Игровой (3×2)</button>
     <button class="btn" onclick="applyPreset('streamer')">📺 Стример (5×3)</button>
     <button class="btn" onclick="applyPreset('oc')">🔥 Разгон (4×3)</button>
@@ -560,7 +561,7 @@ public sealed class TelemetryServer : IDisposable
   <div class="card">
     <div class="macroGrid" id="macroList"></div>
     <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <span style="font-size:12px;color:#8b949e">Клавиши: Ctrl+Shift+M, Alt+F9, Win+PrintScreen, F13, vol_mute</span>
+      <span style="font-size:12px;color:#8b949e">Клавиши (Ctrl+Shift+M), запуск (run:obs64.exe), сайты (url:https://...), очистка ОЗУ (sys:clean_ram), блок ПК (sys:lock)</span>
       <button class="btn btnGreen" onclick="saveMacros()">Сохранить кнопки</button>
     </div>
   </div>
@@ -579,7 +580,7 @@ const DEFAULT_COLORS = {
   clock_weather:'#38BDF8', media_player:'#38BDF8', fps:'#F59E0B', cpu:'#22D3EE',
   gpu:'#84CC16', ram:'#A78BFA', network:'#FB923C', cpu_temp:'#F43F5E',
   gpu_temp:'#10B981', gpu_vram:'#C084FC', cpu_power:'#60A5FA', gpu_power:'#E879F9',
-  cpu_clock:'#38BDF8', gpu_clock:'#A855F7', obs_live:'#EF4444', oc_controls:'#F97316', gpu_fan:'#38BDF8', gpu_hotspot:'#FB7185', ssd_temp:'#FBBF24'
+  cpu_clock:'#38BDF8', gpu_clock:'#A855F7', obs_live:'#EF4444', oc_controls:'#F97316', gpu_fan:'#38BDF8', gpu_hotspot:'#FB7185', ssd_temp:'#FBBF24', ping:'#34D399', top_procs:'#60A5FA'
 };
 
 let layoutCols = 4, layoutRows = 3, layoutBlocks = [], allBlockTypes = [], macros = [], latestData = {};
@@ -728,6 +729,16 @@ function applyPreset(name) {
       { id:'g4', type:'gpu',      x:0, y:1, w:1, h:1, color:'#84CC16' },
       { id:'g5', type:'gpu_temp', x:1, y:1, w:1, h:1, color:'#10B981' },
       { id:'g6', type:'ram',      x:2, y:1, w:1, h:1, color:'#A78BFA' }
+    ];
+  } else if (name === 'gauges') {
+    layoutCols = 4; layoutRows = 3;
+    layoutBlocks = [
+      { id:'rg1', type:'clock_weather', x:0, y:0, w:2, h:2, color:'#38BDF8', style:'spark' },
+      { id:'rg2', type:'media_player',  x:2, y:0, w:2, h:2, color:'#38BDF8', style:'spark' },
+      { id:'rg3', type:'cpu',           x:0, y:2, w:1, h:1, color:'#22D3EE', style:'gauge' },
+      { id:'rg4', type:'gpu',           x:1, y:2, w:1, h:1, color:'#84CC16', style:'gauge' },
+      { id:'rg5', type:'ram',           x:2, y:2, w:1, h:1, color:'#A78BFA', style:'gauge' },
+      { id:'rg6', type:'fps',           x:3, y:2, w:1, h:1, color:'#F59E0B', style:'gauge' }
     ];
   } else if (name === 'oc') {
     layoutCols = 4; layoutRows = 3;
@@ -915,6 +926,12 @@ function updateValues() {
       else if (b.type === 'gpu_fan') { lbl='GPU FAN'; val = d.gpuFanPct != null ? Math.round(d.gpuFanPct)+'%' : '--'; sub = d.gpuFanRpm ? Math.round(d.gpuFanRpm)+' RPM' : ''; num = d.gpuFanPct; }
       else if (b.type === 'gpu_hotspot') { lbl='HOTSPOT'; val = d.gpuHotspot != null ? Math.round(d.gpuHotspot)+'°C' : '--'; sub = 'GPU Max Point'; num = d.gpuHotspot; }
       else if (b.type === 'ssd_temp') { lbl='SSD TEMP'; val = d.ssdTemp != null ? Math.round(d.ssdTemp)+'°C' : '--'; sub = 'NVMe / SATA'; num = d.ssdTemp; }
+      else if (b.type === 'ping') { lbl='PING'; val = d.pingMs != null ? d.pingMs+' мс' : '--'; sub = d.jitterMs != null ? ('Jitter ±' + d.jitterMs + ' мс') : '1.1.1.1'; num = d.pingMs; maxV = 150; }
+      else if (b.type === 'top_procs') {
+        const tp = (d.topProcesses || []).map(p => `<div style="display:flex;justify-content:space-between;font-size:11px"><span>${p.name}</span><span style="color:${b.color}">${p.ramGb.toFixed(1)} ГБ</span></div>`).join('');
+        el.innerHTML = `<div class="bLbl" style="color:${b.color}">ТОП ПРОЦЕССОВ</div><div style="margin-top:4px;display:flex;flex-direction:column;gap:3px">${tp || '<div class="bSub">Загрузка...</div>'}</div>`;
+        continue;
+      }
 
       let sparkSvg = '';
       if (num != null && !isNaN(num)) {
@@ -926,7 +943,24 @@ function updateValues() {
           sparkSvg = `<svg class="spark" viewBox="0 0 100 26" preserveAspectRatio="none"><polyline fill="none" stroke="${b.color}" stroke-width="2" points="${pts}"/></svg>`;
         }
       }
-      el.innerHTML = `<div class="bLbl" style="color:${b.color}">${lbl}</div><div class="bVal">${val}</div><div class="bSub">${sub}</div>${sparkSvg}`;
+      if (b.style === 'gauge') {
+        const pct = num != null && !isNaN(num) ? Math.max(0, Math.min(1, num / maxV)) : 0;
+        const r = 24, circ = 2 * Math.PI * r, arc = circ * 0.75, dash = (arc * pct).toFixed(1);
+        el.innerHTML = `
+          <div class="bLbl" style="color:${b.color}">${lbl}</div>
+          <div style="display:flex;align-items:center;gap:8px;flex:1">
+            <svg width="58" height="58" viewBox="0 0 60 60" style="flex-shrink:0">
+              <circle cx="30" cy="30" r="${r}" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="5.5" stroke-dasharray="${arc.toFixed(1)} ${circ.toFixed(1)}" stroke-linecap="round" transform="rotate(135 30 30)"/>
+              <circle cx="30" cy="30" r="${r}" fill="none" stroke="${b.color}" stroke-width="5.5" stroke-dasharray="${dash} ${circ.toFixed(1)}" stroke-linecap="round" transform="rotate(135 30 30)"/>
+            </svg>
+            <div style="min-width:0">
+              <div class="bVal" style="font-size:21px">${val}</div>
+              <div class="bSub">${sub}</div>
+            </div>
+          </div>`;
+      } else {
+        el.innerHTML = `<div class="bLbl" style="color:${b.color}">${lbl}</div><div class="bVal">${val}</div><div class="bSub">${sub}</div>${sparkSvg}`;
+      }
     }
   }
 }

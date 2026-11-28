@@ -97,7 +97,7 @@ public class ConfigManager
 
     public string ApplyPreset(string requested)
     {
-        var order = new[] { "tiktok", "gamer", "streamer", "oc" };
+        var order = new[] { "tiktok", "gauges", "gamer", "streamer", "oc" };
         AppConfig updated;
         string chosen;
         lock (_lock)
